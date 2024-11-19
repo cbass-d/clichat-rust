@@ -1,5 +1,5 @@
-use super::component::{Component, ComponentRender};
-use super::input_box::{InputBox, RenderProps};
+use super::component::{Component, ComponentRender, RenderProps};
+use super::input_box::InputBox;
 use super::primary::Primary;
 use crate::state_handler::{action::Action, state::State};
 

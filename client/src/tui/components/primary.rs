@@ -1,6 +1,8 @@
-use super::component::{Component, ComponentRender};
-use super::input_box::RenderProps;
-use crate::state_handler::{action::Action, state::State};
+use super::component::{Component, ComponentRender, RenderProps};
+use crate::state_handler::{
+    action::Action,
+    state::{ConnectionStatus, State},
+};
 
 use crossterm::event::KeyEvent;
 use ratatui::{
@@ -27,8 +29,9 @@ impl Component for Primary {
     where
         Self: Sized,
     {
+        let print_buffer: Vec<String> = vec![];
         Self {
-            print_buffer: vec![String::from("Bleh"), String::from("glurp")],
+            print_buffer: state.notifications.clone(),
         }
     }
 
@@ -37,7 +40,7 @@ impl Component for Primary {
         Self: Sized,
     {
         Self {
-            print_buffer: self.print_buffer,
+            print_buffer: state.notifications.clone(),
         }
     }
 
@@ -47,8 +50,10 @@ impl Component for Primary {
 impl ComponentRender<RenderProps> for Primary {
     fn render(&self, frame: &mut Frame, props: RenderProps) {
         let height = frame.area().height;
+        let mut rev_buffer = self.print_buffer.clone();
+        rev_buffer.reverse();
         let text = List::new(
-            self.print_buffer
+            rev_buffer
                 .clone()
                 .into_iter()
                 .map(|line| Line::from(Span::raw(line.clone())))
@@ -58,6 +63,7 @@ impl ComponentRender<RenderProps> for Primary {
         .direction(ListDirection::BottomToTop)
         .block(
             Block::default()
+                .title("CLI CHAT RUST")
                 .borders(Borders::ALL)
                 .fg(props.border_color),
         );

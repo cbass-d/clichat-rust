@@ -1,7 +1,12 @@
 use crate::state_handler::{action::Action, state::State};
 use crossterm::event::KeyEvent;
-use ratatui::{prelude::Backend, Frame};
+use ratatui::{layout::Rect, prelude::Backend, style::Color, Frame};
 use tokio::sync::mpsc::UnboundedSender;
+
+pub struct RenderProps {
+    pub area: Rect,
+    pub border_color: Color,
+}
 
 pub trait Component {
     fn new(state: &State, action_tx: UnboundedSender<Action>) -> Self

@@ -6,13 +6,17 @@ use ratatui::{
     style::Color,
     DefaultTerminal, Terminal,
 };
-use std::{net::TcpStream, time::Duration};
+use std::{io::Write, net::TcpStream, time::Duration};
 use tokio::{
     io::*,
     sync::broadcast::{Receiver, Sender},
 };
 
-use state_handler::{action::Action, state::State, StateHandler};
+use state_handler::{
+    action::Action,
+    state::{ConnectionStatus, State},
+    StateHandler,
+};
 use tui::{
     app_router::AppRouter,
     components::component::{Component, ComponentRender},
@@ -39,6 +43,7 @@ async fn run(shutdown_tx: Sender<String>, shutdown_rx: &mut Receiver<String>) ->
         let mut state = State::default();
         state_handler.state_tx.send(state.clone()).unwrap();
         let mut ticker = tokio::time::interval(Duration::from_millis(250));
+        let mut stream: Option<TcpStream> = None;
 
         loop {
             if state.exit {
@@ -49,10 +54,31 @@ async fn run(shutdown_tx: Sender<String>, shutdown_rx: &mut Receiver<String>) ->
                 _tick = ticker.tick() => {},
                 action = action_rx.recv() => {
                     match action.unwrap() {
-                        Action::Connect { addr } => {},
+                        Action::Connect { addr } => {
+                            match establish_connection(&addr) {
+                                Ok(s) => {
+                                    state.set_server(addr);
+                                    stream = Some(s);
+                                    state.set_connection_status(ConnectionStatus::Established);
+                                    state.push_notification("[+] Successfully connected".to_string());
+                                    state_handler.state_tx.send(state.clone()).unwrap();
+                                },
+                                Err(e) => {
+                                    state.set_connection_status(ConnectionStatus::Bricked);
+                                    let err = e.to_string();
+                                    state.push_notification("[-] Failed to connect: ".to_string() + &err);
+                                    state_handler.state_tx.send(state.clone()).unwrap();
+                                },
+                            }
+                        },
                         Action::Disconnect => {},
                         Action::Send { data } => {
-                            state.set_server(data.clone());
+                            match stream {
+                                Some(ref mut stream) => {
+                                    stream.write_all(data.as_bytes());
+                                },
+                                None => {}
+                            }
                             state_handler.state_tx.send(state.clone()).unwrap();
                         },
                         Action::Quit => {

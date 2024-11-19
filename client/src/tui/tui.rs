@@ -15,8 +15,8 @@ use tokio::{
 };
 
 use super::components::{
-    component::{Component, ComponentRender},
-    input_box::{InputBox, RenderProps},
+    component::{Component, ComponentRender, RenderProps},
+    input_box::InputBox,
 };
 
 pub struct Tui {

@@ -1,19 +1,22 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind};
 use ratatui::{
     layout::Position,
-    prelude::{Backend, Rect},
     style::{Color, Style, Stylize},
     widgets::{Block, Borders, Paragraph},
     Frame,
 };
 use tokio::sync::mpsc::UnboundedSender;
 
-use super::component::{Component, ComponentRender};
-use crate::state_handler::{action::Action, state::State};
+use super::component::{Component, ComponentRender, RenderProps};
+use crate::state_handler::{
+    action::Action,
+    state::{ConnectionStatus, State},
+};
 
 pub struct InputBox {
     char_index: usize,
     input: String,
+    connection_status: ConnectionStatus,
     action_tx: UnboundedSender<Action>,
 }
 
@@ -64,29 +67,44 @@ impl InputBox {
         self.char_index = 0;
     }
 
-    pub fn submit_msg(&mut self) {
+    pub fn submit(&mut self) {
+        match self.connection_status {
+            ConnectionStatus::Unitiliazed => {
+                let _ = self.action_tx.send(Action::Connect {
+                    addr: self.input.trim().to_string(),
+                });
+            }
+            ConnectionStatus::Connecting => {}
+            ConnectionStatus::Established => {
+                let _ = self.action_tx.send(Action::Send {
+                    data: self.input.trim().to_string(),
+                });
+            }
+            ConnectionStatus::Bricked => {}
+        }
         self.input.clear();
-        self.action_tx.send(Action::Send {
-            data: self.input.clone(),
-        });
         self.reset_cursor();
     }
 }
 
 impl Component for InputBox {
-    fn new(_state: &State, action_tx: UnboundedSender<Action>) -> Self {
+    fn new(state: &State, action_tx: UnboundedSender<Action>) -> Self {
         Self {
             char_index: 0,
             input: String::new(),
+            connection_status: state.get_connection_status(),
             action_tx,
         }
     }
 
-    fn update(self, _state: &State) -> Self
+    fn update(self, state: &State) -> Self
     where
         Self: Sized,
     {
-        Self { ..self }
+        Self {
+            connection_status: state.get_connection_status(),
+            ..self
+        }
     }
 
     fn handle_key_event(&mut self, key: KeyEvent) {
@@ -96,7 +114,7 @@ impl Component for InputBox {
 
         match key.code {
             KeyCode::Char('q') => {
-                self.action_tx.send(Action::Quit);
+                let _ = self.action_tx.send(Action::Quit);
             }
             KeyCode::Char(to_insert) => {
                 self.enter_char(to_insert);
@@ -105,7 +123,7 @@ impl Component for InputBox {
                 self.delete_char();
             }
             KeyCode::Enter => {
-                self.submit_msg();
+                self.submit();
             }
             KeyCode::Left => {
                 self.cursor_left();
@@ -118,17 +136,13 @@ impl Component for InputBox {
     }
 }
 
-pub struct RenderProps {
-    pub area: Rect,
-    pub border_color: Color,
-}
-
 impl ComponentRender<RenderProps> for InputBox {
     fn render(&self, frame: &mut Frame, props: RenderProps) {
         let input = Paragraph::new(self.input.as_str())
             .style(Style::default().fg(Color::Green))
             .block(
                 Block::default()
+                    .title("User Input")
                     .borders(Borders::ALL)
                     .fg(props.border_color),
             );
