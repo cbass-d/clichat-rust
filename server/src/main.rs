@@ -7,6 +7,8 @@ use tokio::{
         tcp::{OwnedReadHalf, OwnedWriteHalf},
         TcpListener, TcpStream,
     },
+    signal::ctrl_c,
+    task::JoinSet,
 };
 
 struct RequestHandler {
@@ -19,6 +21,12 @@ struct ResponseWriter {
 
 type ClientConnection = (RequestHandler, ResponseWriter);
 
+enum Terminate {
+    ClientClosed,
+    SocketError,
+    ServerClose,
+}
+
 fn split_stream(stream: TcpStream) -> ClientConnection {
     let (reader, writer) = stream.into_split();
 
@@ -30,8 +38,8 @@ async fn startup_server() -> Result<TcpListener, std::io::Error> {
     return Ok(listener);
 }
 
-async fn handle_connection(client_connection: &mut ClientConnection) {
-    let (req_handler, res_writer) = client_connection;
+async fn handle_connection(stream: TcpStream) -> Terminate {
+    let (req_handler, mut res_writer) = split_stream(stream);
     let mut buf = Vec::with_capacity(4096);
 
     loop {
@@ -39,16 +47,16 @@ async fn handle_connection(client_connection: &mut ClientConnection) {
             Ok(len) if len > 0 => {
                 let s = String::from_utf8(buf[0..len].to_vec()).unwrap();
                 println!("{s}");
-                let w = res_writer.writer.write_all(&buf[0..len]).await;
-                let l = res_writer.writer.flush().await;
+                let _ = res_writer.writer.write_all(&buf[0..len]).await;
+                let _ = res_writer.writer.flush().await;
             }
             Ok(_) => {
-                break;
+                break Terminate::ClientClosed;
             }
             Err(ref e) if e.kind() == ErrorKind::WouldBlock => continue,
             Err(e) => {
                 println!("[-] Failed to read from stream: {e}");
-                break;
+                break Terminate::SocketError;
             }
         }
         buf.clear();
@@ -65,15 +73,21 @@ async fn main() {
             panic!();
         }
     };
-
+    let mut set: JoinSet<Terminate> = JoinSet::new();
     println!("(+) Server started...\n(+) Listening for connections...");
+    let mut ticker = tokio::time::interval(Duration::from_millis(250));
 
-    let (stream, _addr) = listener.accept().await.unwrap();
-    let mut client_connection = split_stream(stream);
+    loop {
+        tokio::select! {
+            _ = ticker.tick() => {},
+            Ok(_) = ctrl_c() => {
+                break;
+            },
+            Ok((stream, _addr)) = listener.accept() => {
+                set.spawn(handle_connection(stream));
+            }
+        }
+    }
 
-    let task = tokio::spawn(async move {
-        handle_connection(&mut client_connection).await;
-    });
-
-    let _ = tokio::join!(task);
+    set.join_all().await;
 }
