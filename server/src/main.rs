@@ -1,73 +1,79 @@
-use std::{
-    io::{prelude::*, BufReader},
-    net::{TcpListener, TcpStream},
-    thread,
+use std::io::{prelude::*, BufReader, ErrorKind};
+use std::time::Duration;
+
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt, Interest},
+    net::{
+        tcp::{OwnedReadHalf, OwnedWriteHalf},
+        TcpListener, TcpStream,
+    },
 };
 
-struct Session {
-    id: i32,
-    nick: String,
-    active: bool,
+struct RequestHandler {
+    reader: OwnedReadHalf,
 }
 
-struct ClientThread {
-    id: i32,
+struct ResponseWriter {
+    writer: OwnedWriteHalf,
 }
 
-fn startup_server() -> Result<TcpListener, std::io::Error> {
-    let listener = TcpListener::bind("127.0.0.1:6667")?;
+type ClientConnection = (RequestHandler, ResponseWriter);
+
+fn split_stream(stream: TcpStream) -> ClientConnection {
+    let (reader, writer) = stream.into_split();
+
+    (RequestHandler { reader }, ResponseWriter { writer })
+}
+
+async fn startup_server() -> Result<TcpListener, std::io::Error> {
+    let listener = TcpListener::bind("127.0.0.1:6667").await?;
     return Ok(listener);
 }
 
-fn handle_incoming(mut stream: &TcpStream) {
-    let mut buf_reader = BufReader::new(&mut stream);
-    let message = buf_reader.fill_buf().unwrap();
+async fn handle_connection(client_connection: &mut ClientConnection) {
+    let (req_handler, res_writer) = client_connection;
+    let mut buf = Vec::with_capacity(4096);
 
-    if message.len() != 0 {
-        println!("{message:?}");
+    loop {
+        match req_handler.reader.try_read_buf(&mut buf) {
+            Ok(len) if len > 0 => {
+                let s = String::from_utf8(buf[0..len].to_vec()).unwrap();
+                println!("{s}");
+                let w = res_writer.writer.write_all(&buf[0..len]).await;
+                let l = res_writer.writer.flush().await;
+            }
+            Ok(_) => {
+                break;
+            }
+            Err(ref e) if e.kind() == ErrorKind::WouldBlock => continue,
+            Err(e) => {
+                println!("[-] Failed to read from stream: {e}");
+                break;
+            }
+        }
+        buf.clear();
     }
-
-    let len = message.len();
-    buf_reader.consume(len);
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     println!("(+) Starting listener...");
-    let listener: TcpListener = match startup_server() {
+    let listener = match startup_server().await {
         Ok(listener) => listener,
-        Err(e) => panic!("Failed to start up listener: {e}"),
+        Err(e) => {
+            eprintln!("[-] Failed to start server: {e}");
+            panic!();
+        }
     };
 
     println!("(+) Server started...\n(+) Listening for connections...");
 
-    let mut num_connections: u64 = 0;
-    let mut active_threads: u64 = 0;
-    let mut thread_handles = vec![];
-    let mut client_sessions: Vec<Session> = vec![];
-    for stream in listener.incoming() {
-        // Get and store needed info about stream
-        let mut stream = stream.unwrap();
+    let (stream, _addr) = listener.accept().await.unwrap();
+    let mut client_connection = split_stream(stream);
 
-        let handle = thread::spawn(move || {
-            let mut stream_clone = stream.try_clone().unwrap();
-            let buf_reader = BufReader::new(&mut stream_clone);
-            let mut buf = String::new();
+    let task = tokio::spawn(async move {
+        handle_connection(&mut client_connection).await;
+    });
 
-            for line in buf_reader.lines() {
-                buf = line.unwrap();
-                println!("From client: {buf}");
-
-                stream.write_all(b"Response from server\n").unwrap();
-                stream.flush().unwrap();
-            }
-        });
-
-        thread_handles.push(handle);
-        active_threads += 1;
-        num_connections += 1;
-    }
-
-    for handle in thread_handles {
-        handle.join().unwrap();
-    }
+    let _ = tokio::join!(task);
 }

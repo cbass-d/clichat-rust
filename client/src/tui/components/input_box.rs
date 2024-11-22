@@ -68,19 +68,26 @@ impl InputBox {
     }
 
     pub fn submit(&mut self) {
-        match self.connection_status {
-            ConnectionStatus::Unitiliazed => {
-                let _ = self.action_tx.send(Action::Connect {
-                    addr: self.input.trim().to_string(),
-                });
+        if self.input == "q" || self.input == "quit" {
+            self.action_tx.send(Action::Quit);
+        }
+        if self.input == "disconnect" {
+            self.action_tx.send(Action::Disconnect);
+        } else {
+            match self.connection_status {
+                ConnectionStatus::Unitiliazed => {
+                    let _ = self.action_tx.send(Action::Connect {
+                        addr: self.input.trim().to_string(),
+                    });
+                }
+                ConnectionStatus::Connecting => {}
+                ConnectionStatus::Established => {
+                    let _ = self.action_tx.send(Action::Send {
+                        data: self.input.trim().to_string(),
+                    });
+                }
+                ConnectionStatus::Bricked => {}
             }
-            ConnectionStatus::Connecting => {}
-            ConnectionStatus::Established => {
-                let _ = self.action_tx.send(Action::Send {
-                    data: self.input.trim().to_string(),
-                });
-            }
-            ConnectionStatus::Bricked => {}
         }
         self.input.clear();
         self.reset_cursor();
@@ -113,9 +120,6 @@ impl Component for InputBox {
         }
 
         match key.code {
-            KeyCode::Char('q') => {
-                let _ = self.action_tx.send(Action::Quit);
-            }
             KeyCode::Char(to_insert) => {
                 self.enter_char(to_insert);
             }

@@ -23,6 +23,7 @@ impl Default for State {
             connection_status: ConnectionStatus::Unitiliazed,
             current_server: String::new(),
             notifications: vec![
+                String::from("---To quit type q or quit and press enter---"),
                 String::from("[-] Not connected to a server"),
                 String::from("[*] Enter server address (ex. 127.0.0.1:6667)"),
             ],

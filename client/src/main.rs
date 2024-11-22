@@ -6,9 +6,13 @@ use ratatui::{
     style::Color,
     DefaultTerminal, Terminal,
 };
-use std::{io::Write, net::TcpStream, time::Duration};
+use std::time::Duration;
 use tokio::{
     io::*,
+    net::{
+        tcp::{OwnedReadHalf, OwnedWriteHalf},
+        TcpStream,
+    },
     sync::broadcast::{Receiver, Sender},
 };
 
@@ -26,9 +30,35 @@ use tui::{
 mod state_handler;
 mod tui;
 
-fn establish_connection(server: &str) -> Result<TcpStream> {
-    let stream = TcpStream::connect(server)?;
+struct ResponseStream {
+    reader: OwnedReadHalf,
+}
+
+struct RequestHandler {
+    writer: OwnedWriteHalf,
+}
+
+type ConnectionHandler = (ResponseStream, RequestHandler);
+
+fn split_stream(stream: TcpStream) -> ConnectionHandler {
+    let (reader, writer) = stream.into_split();
+
+    (ResponseStream { reader }, RequestHandler { writer })
+}
+
+async fn establish_connection(server: &str) -> Result<TcpStream> {
+    let stream = TcpStream::connect(server).await?;
     return Ok(stream);
+}
+
+fn terminate_connection(
+    connection_handler: &mut Option<ConnectionHandler>,
+    state: &mut State,
+) -> State {
+    *connection_handler = None;
+    state.set_connection_status(ConnectionStatus::Unitiliazed);
+
+    state.clone()
 }
 
 async fn run(shutdown_tx: Sender<String>, shutdown_rx: &mut Receiver<String>) -> Result<()> {
@@ -42,55 +72,85 @@ async fn run(shutdown_tx: Sender<String>, shutdown_rx: &mut Receiver<String>) ->
         // Create and send initial state to TUI
         let mut state = State::default();
         state_handler.state_tx.send(state.clone()).unwrap();
+
         let mut ticker = tokio::time::interval(Duration::from_millis(250));
-        let mut stream: Option<TcpStream> = None;
+        let mut connection_handle: Option<ConnectionHandler> = None;
+        let mut buf = Vec::with_capacity(4096);
 
         loop {
             if state.exit {
                 let _ = shutdown_tx.send(String::from("end"));
             }
 
-            tokio::select! {
-                _tick = ticker.tick() => {},
-                action = action_rx.recv() => {
-                    match action.unwrap() {
-                        Action::Connect { addr } => {
-                            match establish_connection(&addr) {
-                                Ok(s) => {
+            if let Some((res_stream, req_handler)) = connection_handle.as_mut() {
+                tokio::select! {
+                    _tick = ticker.tick() => {},
+                    _ = res_stream.reader.readable() => {
+                        match res_stream.reader.try_read_buf(&mut buf) {
+                            Ok(len) if len > 0 => {
+                                let msg = String::from_utf8(buf[0..len].to_vec()).unwrap();
+                                state.push_notification(msg);
+                            },
+                            Ok(_) => {
+                                state.push_notification("[-] Closing connection to server".to_string());
+                                state = terminate_connection(&mut connection_handle, &mut state);
+                            },
+                            Err(ref e) if e.kind() == ErrorKind::WouldBlock => {},
+                            Err(e) => {
+                                let err = e.to_string();
+                                state.push_notification("[-] Failed to read from stream: ".to_string() + &err);
+                                state.push_notification("[-] Closing connection to server".to_string());
+                                state = terminate_connection(&mut connection_handle, &mut state);
+                            }
+                        }
+                    }
+                    action = action_rx.recv() => {
+                        match action.unwrap() {
+                            Action::Send { data } => {
+                                let len = req_handler.writer.try_write(data.as_bytes()).unwrap();
+                                let len = len.to_string();
+                                state.push_notification("[+] Bytes written to server:" .to_string() + &len);
+                            },
+                            Action::Disconnect => {
+                                state.push_notification("[-] Closing connection to server".to_string());
+                                state = terminate_connection(&mut connection_handle, &mut state);
+                            },
+                            Action::Quit => {
+                                state.exit();
+                            },
+                            _ => {},
+                        }
+                    },
+                }
+            } else {
+                tokio::select! {
+                    _tick = ticker.tick() => {},
+                    action = action_rx.recv() => {
+                        match action.unwrap() {
+                            Action::Connect { addr } => {
+                                match establish_connection(&addr).await {
+                                    Ok(s) => {
                                     state.set_server(addr);
-                                    stream = Some(s);
-                                    state.set_connection_status(ConnectionStatus::Established);
-                                    state.push_notification("[+] Successfully connected".to_string());
-                                    state_handler.state_tx.send(state.clone()).unwrap();
-                                },
-                                Err(e) => {
-                                    state.set_connection_status(ConnectionStatus::Bricked);
-                                    let err = e.to_string();
-                                    state.push_notification("[-] Failed to connect: ".to_string() + &err);
-                                    state_handler.state_tx.send(state.clone()).unwrap();
-                                },
-                            }
-                        },
-                        Action::Disconnect => {},
-                        Action::Send { data } => {
-                            match stream {
-                                Some(ref mut stream) => {
-                                    stream.write_all(data.as_bytes());
-                                },
-                                None => {}
-                            }
-                            state_handler.state_tx.send(state.clone()).unwrap();
-                        },
-                        Action::Quit => {
-                            state.exit();
-                            state_handler.state_tx.send(state.clone()).unwrap();
+                                        state.set_connection_status(ConnectionStatus::Established);
+                                        let _ = connection_handle.insert(split_stream(s));
+                                        state.push_notification("[+] Successfully connected".to_string());
+                                    },
+                                    Err(e) => {
+                                        let err = e.to_string();
+                                        state.push_notification("[-] Failed to connect: ".to_string() + &err);
+                                    },
+                                }
+                            },
+                            Action::Quit => {
+                                state.exit();
+                            },
+                            _ => {}
                         }
                     }
                 }
-                _ = shutdown_rx_state.recv() => {
-                    break;
-                }
             }
+            state_handler.state_tx.send(state.clone()).unwrap();
+            buf.clear();
         }
     });
 
@@ -136,7 +196,7 @@ fn shutdown() {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel(3);
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel(5);
     let mut shutdown_rx_main = shutdown_rx.resubscribe();
     tokio::spawn(async move {
         let _ = run(shutdown_tx, &mut shutdown_rx).await;
