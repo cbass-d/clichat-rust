@@ -1,6 +1,6 @@
 use crate::state_handler::{action::Action, state::State};
 use crossterm::event::KeyEvent;
-use ratatui::{layout::Rect, prelude::Backend, style::Color, Frame};
+use ratatui::{layout::Rect, style::Color, Frame};
 use tokio::sync::mpsc::UnboundedSender;
 
 pub struct RenderProps {

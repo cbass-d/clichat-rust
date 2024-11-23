@@ -5,10 +5,8 @@ use crate::state_handler::{action::Action, state::State};
 
 use crossterm::event::KeyEvent;
 use ratatui::{
-    layout::{Constraint, Direction, Layout},
-    prelude::*,
-    style::{Color, Style, Stylize},
-    widgets::{Block, BorderType, Borders, Paragraph},
+    layout::{Constraint, Layout},
+    style::Color,
     Frame,
 };
 use tokio::sync::mpsc::UnboundedSender;
@@ -47,7 +45,7 @@ impl Component for MainPage {
 }
 
 impl ComponentRender<()> for MainPage {
-    fn render(&self, frame: &mut Frame, props: ()) {
+    fn render(&self, frame: &mut Frame, _props: ()) {
         let constraints = Constraint::from_percentages([90, 10]);
         let layout = Layout::default()
             .constraints(constraints)

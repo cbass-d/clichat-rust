@@ -70,8 +70,7 @@ impl InputBox {
     pub fn submit(&mut self) {
         if self.input == "q" || self.input == "quit" {
             self.action_tx.send(Action::Quit);
-        }
-        if self.input == "disconnect" {
+        } else if self.input == "disconnect" {
             self.action_tx.send(Action::Disconnect);
         } else {
             match self.connection_status {
@@ -89,6 +88,7 @@ impl InputBox {
                 ConnectionStatus::Bricked => {}
             }
         }
+
         self.input.clear();
         self.reset_cursor();
     }

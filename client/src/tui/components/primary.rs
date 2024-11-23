@@ -1,14 +1,11 @@
 use super::component::{Component, ComponentRender, RenderProps};
-use crate::state_handler::{
-    action::Action,
-    state::{ConnectionStatus, State},
-};
+use crate::state_handler::{action::Action, state::State};
 
 use crossterm::event::KeyEvent;
 use ratatui::{
     prelude::*,
-    text::{Line, Span, Text},
-    widgets::{Block, Borders, List, ListDirection, ListItem, Paragraph},
+    text::{Line, Span},
+    widgets::{Block, Borders, List, ListDirection},
     Frame,
 };
 use tokio::sync::mpsc::UnboundedSender;
@@ -17,19 +14,13 @@ pub struct Primary {
     print_buffer: Vec<String>,
 }
 
-impl Primary {
-    pub fn add_to_buffer(&mut self, to_add: String) {
-        self.print_buffer.push(to_add);
-        self.print_buffer.reverse();
-    }
-}
+impl Primary {}
 
 impl Component for Primary {
-    fn new(state: &State, action_tx: UnboundedSender<Action>) -> Self
+    fn new(state: &State, _action_tx: UnboundedSender<Action>) -> Self
     where
         Self: Sized,
     {
-        let print_buffer: Vec<String> = vec![];
         Self {
             print_buffer: state.notifications.clone(),
         }
@@ -44,12 +35,11 @@ impl Component for Primary {
         }
     }
 
-    fn handle_key_event(&mut self, key: KeyEvent) {}
+    fn handle_key_event(&mut self, _key: KeyEvent) {}
 }
 
 impl ComponentRender<RenderProps> for Primary {
     fn render(&self, frame: &mut Frame, props: RenderProps) {
-        let height = frame.area().height;
         let mut rev_buffer = self.print_buffer.clone();
         rev_buffer.reverse();
         let text = List::new(

@@ -3,7 +3,7 @@ use super::components::main_page::MainPage;
 use crate::state_handler::{action::Action, state::State};
 
 use crossterm::event::KeyEvent;
-use ratatui::{prelude::*, Frame};
+use ratatui::Frame;
 use tokio::sync::mpsc::UnboundedSender;
 
 pub struct AppRouter {

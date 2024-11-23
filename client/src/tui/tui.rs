@@ -1,6 +1,5 @@
 use crate::state_handler::action::Action;
 use color_eyre::eyre::Result;
-#[allow(unused_imports, dead_code)]
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture, KeyEvent},
     execute,
@@ -12,11 +11,6 @@ use std::io::{self, Stdout};
 use tokio::{
     sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
     task::JoinHandle,
-};
-
-use super::components::{
-    component::{Component, ComponentRender, RenderProps},
-    input_box::InputBox,
 };
 
 pub struct Tui {

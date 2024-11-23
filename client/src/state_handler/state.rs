@@ -1,7 +1,4 @@
-use crossterm::event::{KeyCode, KeyCode::Char, KeyEvent, KeyEventKind};
-use std::net::TcpStream;
-
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum ConnectionStatus {
     Established,
     Connecting,
@@ -42,6 +39,10 @@ impl State {
     }
 
     pub fn set_connection_status(&mut self, status: ConnectionStatus) {
+        if status == ConnectionStatus::Unitiliazed {
+            self.push_notification("[*] Enter server address (ex. 127.0.0.1:6667)".to_string());
+        }
+
         self.connection_status = status;
     }
 

@@ -1,11 +1,3 @@
-#[allow(unused_imports, dead_code)]
-use ratatui::{
-    backend::{Backend, CrosstermBackend},
-    crossterm::event::{self, KeyCode, KeyEventKind},
-    layout::{Constraint, Direction, Layout, Rect},
-    style::Color,
-    DefaultTerminal, Terminal,
-};
 use std::time::Duration;
 use tokio::{
     io::*,
@@ -38,6 +30,12 @@ struct RequestHandler {
     writer: OwnedWriteHalf,
 }
 
+#[derive(Clone)]
+enum Terminate {
+    StateExit,
+    Error,
+}
+
 type ConnectionHandler = (ResponseStream, RequestHandler);
 
 fn split_stream(stream: TcpStream) -> ConnectionHandler {
@@ -51,17 +49,13 @@ async fn establish_connection(server: &str) -> Result<TcpStream> {
     return Ok(stream);
 }
 
-fn terminate_connection(
-    connection_handler: &mut Option<ConnectionHandler>,
-    state: &mut State,
-) -> State {
-    *connection_handler = None;
+fn terminate_connection(state: &mut State) -> (State, Option<ConnectionHandler>) {
     state.set_connection_status(ConnectionStatus::Unitiliazed);
 
-    state.clone()
+    (state.clone(), None)
 }
 
-async fn run(shutdown_tx: Sender<String>, shutdown_rx: &mut Receiver<String>) -> Result<()> {
+async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminate>) -> Result<()> {
     let (state_handler, mut state_rx) = StateHandler::new();
     let (tui, mut action_rx, mut tui_events) = Tui::new();
     let mut shutdown_rx_state = shutdown_rx.resubscribe();
@@ -79,7 +73,7 @@ async fn run(shutdown_tx: Sender<String>, shutdown_rx: &mut Receiver<String>) ->
 
         loop {
             if state.exit {
-                let _ = shutdown_tx.send(String::from("end"));
+                let _ = shutdown_tx.send(Terminate::StateExit);
             }
 
             if let Some((res_stream, req_handler)) = connection_handle.as_mut() {
@@ -92,15 +86,15 @@ async fn run(shutdown_tx: Sender<String>, shutdown_rx: &mut Receiver<String>) ->
                                 state.push_notification(msg);
                             },
                             Ok(_) => {
-                                state.push_notification("[-] Closing connection to server".to_string());
-                                state = terminate_connection(&mut connection_handle, &mut state);
+                                state.push_notification("[-] Connection closed by server".to_string());
+                                (state, connection_handle) = terminate_connection(&mut state);
                             },
                             Err(ref e) if e.kind() == ErrorKind::WouldBlock => {},
                             Err(e) => {
                                 let err = e.to_string();
                                 state.push_notification("[-] Failed to read from stream: ".to_string() + &err);
                                 state.push_notification("[-] Closing connection to server".to_string());
-                                state = terminate_connection(&mut connection_handle, &mut state);
+                                (state, connection_handle) = terminate_connection(&mut state);
                             }
                         }
                     }
@@ -113,7 +107,7 @@ async fn run(shutdown_tx: Sender<String>, shutdown_rx: &mut Receiver<String>) ->
                             },
                             Action::Disconnect => {
                                 state.push_notification("[-] Closing connection to server".to_string());
-                                state = terminate_connection(&mut connection_handle, &mut state);
+                                (state, connection_handle) = terminate_connection(&mut state);
                             },
                             Action::Quit => {
                                 state.exit();
@@ -121,6 +115,10 @@ async fn run(shutdown_tx: Sender<String>, shutdown_rx: &mut Receiver<String>) ->
                             _ => {},
                         }
                     },
+                    _ = shutdown_rx_state.recv() => {
+                            state.exit();
+                            break;
+                    }
                 }
             } else {
                 tokio::select! {
@@ -130,7 +128,7 @@ async fn run(shutdown_tx: Sender<String>, shutdown_rx: &mut Receiver<String>) ->
                             Action::Connect { addr } => {
                                 match establish_connection(&addr).await {
                                     Ok(s) => {
-                                    state.set_server(addr);
+                                        state.set_server(addr);
                                         state.set_connection_status(ConnectionStatus::Established);
                                         let _ = connection_handle.insert(split_stream(s));
                                         state.push_notification("[+] Successfully connected".to_string());
@@ -146,10 +144,19 @@ async fn run(shutdown_tx: Sender<String>, shutdown_rx: &mut Receiver<String>) ->
                             },
                             _ => {}
                         }
+                    },
+                    _ = shutdown_rx_state.recv() => {
+                            state.exit();
+                            break;
                     }
                 }
             }
-            state_handler.state_tx.send(state.clone()).unwrap();
+            match state_handler.state_tx.send(state.clone()) {
+                Ok(_) => {}
+                Err(_) => {
+                    let _ = shutdown_tx.send(Terminate::Error);
+                }
+            }
             buf.clear();
         }
     });
@@ -174,7 +181,12 @@ async fn run(shutdown_tx: Sender<String>, shutdown_rx: &mut Receiver<String>) ->
                     }
                 }
                 state = state_rx.recv() => {
-                    app_router = app_router.update(&state.unwrap());
+                    match state {
+                        Some(state) => {
+                            app_router = app_router.update(&state);
+                        }
+                        None => {},
+                    }
                 }
                 _ = shutdown_rx_tui.recv() => {
                     break;
@@ -183,6 +195,8 @@ async fn run(shutdown_tx: Sender<String>, shutdown_rx: &mut Receiver<String>) ->
 
             let _ = terminal.draw(|f| app_router.render(f, ()));
         }
+
+        Tui::teardown_terminal(&mut terminal);
     });
 
     let (_, _) = tokio::join!(tui_task, state_task);
@@ -196,7 +210,7 @@ fn shutdown() {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel(5);
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<Terminate>(2);
     let mut shutdown_rx_main = shutdown_rx.resubscribe();
     tokio::spawn(async move {
         let _ = run(shutdown_tx, &mut shutdown_rx).await;
@@ -205,7 +219,6 @@ async fn main() -> Result<()> {
 
     tokio::select! {
         _ = shutdown_rx_main.recv() => {
-            ratatui::restore();
             shutdown();
         }
     }

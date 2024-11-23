@@ -1,13 +1,14 @@
-use std::io::{prelude::*, BufReader, ErrorKind};
+use std::io::ErrorKind;
 use std::time::Duration;
 
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt, Interest},
+    io::AsyncWriteExt,
     net::{
         tcp::{OwnedReadHalf, OwnedWriteHalf},
         TcpListener, TcpStream,
     },
     signal::ctrl_c,
+    sync::broadcast::{error::TryRecvError, Receiver},
     task::JoinSet,
 };
 
@@ -21,6 +22,7 @@ struct ResponseWriter {
 
 type ClientConnection = (RequestHandler, ResponseWriter);
 
+#[derive(Clone)]
 enum Terminate {
     ClientClosed,
     SocketError,
@@ -29,7 +31,6 @@ enum Terminate {
 
 fn split_stream(stream: TcpStream) -> ClientConnection {
     let (reader, writer) = stream.into_split();
-
     (RequestHandler { reader }, ResponseWriter { writer })
 }
 
@@ -38,11 +39,23 @@ async fn startup_server() -> Result<TcpListener, std::io::Error> {
     return Ok(listener);
 }
 
-async fn handle_connection(stream: TcpStream) -> Terminate {
-    let (req_handler, mut res_writer) = split_stream(stream);
+async fn handle_connection(stream: TcpStream, mut shutdown_rx: Receiver<Terminate>) -> Terminate {
+    let client_connection = split_stream(stream);
+    let (req_handler, mut res_writer) = client_connection;
     let mut buf = Vec::with_capacity(4096);
 
     loop {
+        match shutdown_rx.try_recv() {
+            Ok(msg) => {
+                break msg;
+            }
+            Err(TryRecvError::Closed) => {
+                break Terminate::ServerClose;
+            }
+            Err(TryRecvError::Empty) => {}
+            Err(_) => {}
+        }
+
         match req_handler.reader.try_read_buf(&mut buf) {
             Ok(len) if len > 0 => {
                 let s = String::from_utf8(buf[0..len].to_vec()).unwrap();
@@ -65,7 +78,7 @@ async fn handle_connection(stream: TcpStream) -> Terminate {
 
 #[tokio::main]
 async fn main() {
-    println!("(+) Starting listener...");
+    println!("[+] Starting listener...");
     let listener = match startup_server().await {
         Ok(listener) => listener,
         Err(e) => {
@@ -74,17 +87,20 @@ async fn main() {
         }
     };
     let mut set: JoinSet<Terminate> = JoinSet::new();
-    println!("(+) Server started...\n(+) Listening for connections...");
+    let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel::<Terminate>(1);
+    println!("[+] Server started...\n[+] Listening for connections...");
     let mut ticker = tokio::time::interval(Duration::from_millis(250));
 
     loop {
         tokio::select! {
             _ = ticker.tick() => {},
             Ok(_) = ctrl_c() => {
+                println!("[-] Shutting down server");
+                let _ = shutdown_tx.send(Terminate::ServerClose);
                 break;
             },
             Ok((stream, _addr)) = listener.accept() => {
-                set.spawn(handle_connection(stream));
+                set.spawn(handle_connection(stream, shutdown_rx.resubscribe()));
             }
         }
     }
