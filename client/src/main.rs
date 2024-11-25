@@ -70,6 +70,7 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
         let mut ticker = tokio::time::interval(Duration::from_millis(250));
         let mut connection_handle: Option<ConnectionHandler> = None;
         let mut buf = Vec::with_capacity(4096);
+        let mut update: bool = false;
 
         loop {
             if state.exit {
@@ -84,10 +85,12 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                             Ok(len) if len > 0 => {
                                 let msg = String::from_utf8(buf[0..len].to_vec()).unwrap();
                                 state.push_notification(msg);
+                                update = true;
                             },
                             Ok(_) => {
                                 state.push_notification("[-] Connection closed by server".to_string());
                                 (state, connection_handle) = terminate_connection(&mut state);
+                                update = true;
                             },
                             Err(ref e) if e.kind() == ErrorKind::WouldBlock => {},
                             Err(e) => {
@@ -95,6 +98,7 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                                 state.push_notification("[-] Failed to read from stream: ".to_string() + &err);
                                 state.push_notification("[-] Closing connection to server".to_string());
                                 (state, connection_handle) = terminate_connection(&mut state);
+                                update = true;
                             }
                         }
                     }
@@ -104,15 +108,22 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                                 let len = req_handler.writer.try_write(data.as_bytes()).unwrap();
                                 let len = len.to_string();
                                 state.push_notification("[+] Bytes written to server:" .to_string() + &len);
+                                update = true;
                             },
                             Action::Disconnect => {
                                 state.push_notification("[-] Closing connection to server".to_string());
                                 (state, connection_handle) = terminate_connection(&mut state);
+                                update = true;
                             },
                             Action::Quit => {
                                 state.exit();
+                                update = true;
                             },
-                            _ => {},
+                            Action::Invalid => {
+                                state.push_notification("[-] Invalid command".to_string());
+                                update = true;
+                            },
+                            _ => {}
                         }
                     },
                     _ = shutdown_rx_state.recv() => {
@@ -125,6 +136,11 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                     _tick = ticker.tick() => {},
                     action = action_rx.recv() => {
                         match action.unwrap() {
+                            Action::SetName { name } => {
+                                state.set_name(name.clone());
+                                state.push_notification(format!("[+] Name set to [{name}]"));
+                                update = true;
+                            }
                             Action::Connect { addr } => {
                                 match establish_connection(&addr).await {
                                     Ok(s) => {
@@ -138,9 +154,15 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                                         state.push_notification("[-] Failed to connect: ".to_string() + &err);
                                     },
                                 }
+                                update = true;
                             },
                             Action::Quit => {
                                 state.exit();
+                                update = true;
+                            },
+                            Action::Invalid => {
+                                state.push_notification("[-] Invalid command".to_string());
+                                update = true;
                             },
                             _ => {}
                         }
@@ -151,11 +173,15 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                     }
                 }
             }
-            match state_handler.state_tx.send(state.clone()) {
-                Ok(_) => {}
-                Err(_) => {
-                    let _ = shutdown_tx.send(Terminate::Error);
+
+            if update {
+                match state_handler.state_tx.send(state.clone()) {
+                    Ok(_) => {}
+                    Err(_) => {
+                        let _ = shutdown_tx.send(Terminate::Error);
+                    }
                 }
+                update = false;
             }
             buf.clear();
         }
@@ -183,6 +209,7 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                 state = state_rx.recv() => {
                     match state {
                         Some(state) => {
+                            let _ = terminal.clear();
                             app_router = app_router.update(&state);
                         }
                         None => {},

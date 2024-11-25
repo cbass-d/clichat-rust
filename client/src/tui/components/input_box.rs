@@ -9,7 +9,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 use super::component::{Component, ComponentRender, RenderProps};
 use crate::state_handler::{
-    action::Action,
+    action::{parse_command, Action},
     state::{ConnectionStatus, State},
 };
 
@@ -17,6 +17,8 @@ pub struct InputBox {
     char_index: usize,
     input: String,
     connection_status: ConnectionStatus,
+    name: String,
+    prompt: String,
     action_tx: UnboundedSender<Action>,
 }
 
@@ -68,25 +70,13 @@ impl InputBox {
     }
 
     pub fn submit(&mut self) {
-        if self.input == "q" || self.input == "quit" {
-            self.action_tx.send(Action::Quit);
-        } else if self.input == "disconnect" {
-            self.action_tx.send(Action::Disconnect);
-        } else {
-            match self.connection_status {
-                ConnectionStatus::Unitiliazed => {
-                    let _ = self.action_tx.send(Action::Connect {
-                        addr: self.input.trim().to_string(),
-                    });
-                }
-                ConnectionStatus::Connecting => {}
-                ConnectionStatus::Established => {
-                    let _ = self.action_tx.send(Action::Send {
-                        data: self.input.trim().to_string(),
-                    });
-                }
-                ConnectionStatus::Bricked => {}
+        let input = self.input.trim().to_string();
+
+        match parse_command(input) {
+            Some(action) => {
+                let _ = self.action_tx.send(action);
             }
+            None => {}
         }
 
         self.input.clear();
@@ -100,6 +90,8 @@ impl Component for InputBox {
             char_index: 0,
             input: String::new(),
             connection_status: state.get_connection_status(),
+            name: String::new(),
+            prompt: String::new(),
             action_tx,
         }
     }
@@ -110,6 +102,8 @@ impl Component for InputBox {
     {
         Self {
             connection_status: state.get_connection_status(),
+            name: state.get_name(),
+            prompt: state.get_name(),
             ..self
         }
     }
@@ -146,7 +140,7 @@ impl ComponentRender<RenderProps> for InputBox {
             .style(Style::default().fg(Color::Green))
             .block(
                 Block::default()
-                    .title("User Input")
+                    .title(self.prompt.clone())
                     .borders(Borders::ALL)
                     .fg(props.border_color),
             );

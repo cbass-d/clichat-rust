@@ -4,7 +4,6 @@ use crate::state_handler::{action::Action, state::State};
 use crossterm::event::KeyEvent;
 use ratatui::{
     prelude::*,
-    text::{Line, Span},
     widgets::{Block, Borders, List, ListDirection},
     Frame,
 };
@@ -44,9 +43,8 @@ impl ComponentRender<RenderProps> for Primary {
         rev_buffer.reverse();
         let text = List::new(
             rev_buffer
-                .clone()
                 .into_iter()
-                .map(|line| Line::from(Span::raw(line.clone())))
+                .map(|line| Text::from(line))
                 .collect::<Vec<_>>(),
         )
         .style(Style::default().fg(Color::Green))
