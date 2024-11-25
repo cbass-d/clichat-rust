@@ -34,7 +34,9 @@ pub fn parse_command(string: String) -> Option<Action> {
                     let mut msg = String::new();
                     while let Some(part) = tokens.next() {
                         msg += part;
+                        msg += " ";
                     }
+                    msg = msg.trim().to_string();
 
                     if msg == "" {
                         return Some(Action::Invalid);
