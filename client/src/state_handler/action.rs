@@ -9,7 +9,6 @@ pub enum Action {
 
 pub fn parse_command(string: String) -> Option<Action> {
     let mut tokens = string.split_whitespace();
-
     if let Some(cmd) = tokens.next() {
         if cmd.starts_with('/') {
             let cmd_name = &cmd[1..];
@@ -18,14 +17,18 @@ pub fn parse_command(string: String) -> Option<Action> {
                 "name" => {
                     let name = match tokens.next() {
                         Some(name) => name.to_string(),
-                        None => return Some(Action::Invalid),
+                        None => {
+                            return None;
+                        }
                     };
                     return Some(Action::SetName { name });
                 }
                 "connect" => {
                     let addr = match tokens.next() {
                         Some(addr) => addr.to_string(),
-                        None => return Some(Action::Invalid),
+                        None => {
+                            return None;
+                        }
                     };
 
                     return Some(Action::Connect { addr });
@@ -39,7 +42,7 @@ pub fn parse_command(string: String) -> Option<Action> {
                     msg = msg.trim().to_string();
 
                     if msg == "" {
-                        return Some(Action::Invalid);
+                        return None;
                     }
                     return Some(Action::Send { data: msg });
                 }
@@ -54,5 +57,5 @@ pub fn parse_command(string: String) -> Option<Action> {
         }
     }
 
-    return Some(Action::Invalid);
+    return None;
 }

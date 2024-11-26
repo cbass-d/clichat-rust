@@ -76,7 +76,9 @@ impl InputBox {
             Some(action) => {
                 let _ = self.action_tx.send(action);
             }
-            None => {}
+            None => {
+                let _ = self.action_tx.send(Action::Invalid);
+            }
         }
 
         self.input.clear();
@@ -90,8 +92,8 @@ impl Component for InputBox {
             char_index: 0,
             input: String::new(),
             connection_status: state.get_connection_status(),
-            name: String::new(),
-            prompt: String::new(),
+            name: state.get_name(),
+            prompt: state.get_name(),
             action_tx,
         }
     }

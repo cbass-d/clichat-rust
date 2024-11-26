@@ -12,3 +12,4 @@ serde = {version =  "1.0.210", features =  ["derive"]}
 tokio = {version = "1.41.1", features = ["full"] }
 tokio-util = "0.7.12"
 toml = "0.8.19"
+common = {path = "../common"}

@@ -91,6 +91,7 @@ name = "client"
 version = "0.1.0"
 dependencies = [
  "color-eyre",
+ "common",
  "crossterm",
  "futures",
  "ratatui",
@@ -126,6 +127,10 @@ dependencies = [
  "tracing-core",
  "tracing-error",
 ]
+
+[[package]]
+name = "common"
+version = "0.1.0"
 
 [[package]]
 name = "compact_str"
@@ -627,6 +632,7 @@ dependencies = [
 name = "server"
 version = "0.1.0"
 dependencies = [
+ "common",
  "tokio",
 ]
 

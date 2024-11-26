@@ -31,7 +31,7 @@ impl Default for State {
         State {
             connection_status: ConnectionStatus::Unitiliazed,
             current_server: String::new(),
-            name: String::new(),
+            name: String::from("anon"), // Default name
             notifications: startup_notices,
             exit: false,
         }
@@ -51,15 +51,15 @@ impl State {
         self.current_server = server;
     }
 
+    pub fn get_server(&self) -> String {
+        self.current_server.clone()
+    }
+
     pub fn push_notification(&mut self, notification: String) {
         self.notifications.push(notification);
     }
 
     pub fn set_connection_status(&mut self, status: ConnectionStatus) {
-        if status == ConnectionStatus::Unitiliazed {
-            self.push_notification("[*] Enter server address (ex. 127.0.0.1:6667)".to_string());
-        }
-
         self.connection_status = status;
     }
 

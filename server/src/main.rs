@@ -1,6 +1,5 @@
 use std::io::ErrorKind;
 use std::time::Duration;
-
 use tokio::{
     io::AsyncWriteExt,
     net::{
@@ -12,6 +11,8 @@ use tokio::{
     task::JoinSet,
 };
 
+use common;
+
 struct RequestHandler {
     reader: OwnedReadHalf,
 }
@@ -21,6 +22,7 @@ struct ResponseWriter {
 }
 
 type ClientConnection = (RequestHandler, ResponseWriter);
+const SERVER_ADDR: &str = "127.0.0.1";
 
 #[derive(Clone)]
 enum Terminate {
@@ -58,10 +60,22 @@ async fn handle_connection(stream: TcpStream, mut shutdown_rx: Receiver<Terminat
 
         match req_handler.reader.try_read_buf(&mut buf) {
             Ok(len) if len > 0 => {
-                let s = String::from_utf8(buf[0..len].to_vec()).unwrap();
-                println!("{s}");
-                let _ = res_writer.writer.write_all(&buf[0..len]).await;
-                let _ = res_writer.writer.flush().await;
+                let message = String::from_utf8(buf[0..len].to_vec()).unwrap();
+                if let Some((origin, room_option, sender, message)) =
+                    common::unpack_message(&message)
+                {
+                    if let Some(room) = room_option {
+                        println!("From {origin}-{sender} to {room:?}: {message}");
+                    } else {
+                        println!("From {origin}-{sender}: {message}");
+                    }
+                    let packed_message =
+                        common::pack_message(SERVER_ADDR, Some("echo"), "server", message);
+                    let _ = res_writer.writer.write_all(packed_message.as_bytes()).await;
+                    let _ = res_writer.writer.flush().await;
+                } else {
+                    println!("[-] Invalid message received");
+                }
             }
             Ok(_) => {
                 break Terminate::ClientClosed;

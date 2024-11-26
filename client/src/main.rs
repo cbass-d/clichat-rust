@@ -8,6 +8,7 @@ use tokio::{
     sync::broadcast::{Receiver, Sender},
 };
 
+use common;
 use state_handler::{
     action::Action,
     state::{ConnectionStatus, State},
@@ -69,6 +70,7 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
 
         let mut ticker = tokio::time::interval(Duration::from_millis(250));
         let mut connection_handle: Option<ConnectionHandler> = None;
+        let mut origin = String::new();
         let mut buf = Vec::with_capacity(4096);
         let mut update: bool = false;
 
@@ -83,8 +85,16 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                     _ = res_stream.reader.readable() => {
                         match res_stream.reader.try_read_buf(&mut buf) {
                             Ok(len) if len > 0 => {
-                                let msg = String::from_utf8(buf[0..len].to_vec()).unwrap();
-                                state.push_notification(msg);
+                                let message = String::from_utf8(buf[0..len].to_vec()).unwrap();
+                                if let Some((origin, room_option, sender, message)) = common::unpack_message(&message) {
+                                    if let Some(room) = room_option {
+                                        state.push_notification(format!("From {origin}-{sender} to {room}: {message}"));
+                                    } else {
+                                        state.push_notification(format!("From {origin}-{sender}: {message}"));
+                                    }
+                                } else {
+                                    state.push_notification("[-] Invalid message received".to_string());
+                                }
                                 update = true;
                             },
                             Ok(_) => {
@@ -104,8 +114,14 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                     }
                     action = action_rx.recv() => {
                         match action.unwrap() {
+                            Action::SetName { name } => {
+                                state.set_name(name.clone());
+                                state.push_notification(format!("[+] Name set to [{name}]"));
+                                update = true;
+                            },
                             Action::Send { data } => {
-                                let len = req_handler.writer.try_write(data.as_bytes()).unwrap();
+                                let message = common::pack_message(&origin, Some("echo"), &state.get_name(), &data);
+                                let len = req_handler.writer.try_write(message.as_bytes()).unwrap();
                                 let len = len.to_string();
                                 state.push_notification("[+] Bytes written to server:" .to_string() + &len);
                                 update = true;
@@ -127,7 +143,6 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                         }
                     },
                     _ = shutdown_rx_state.recv() => {
-                            state.exit();
                             break;
                     }
                 }
@@ -141,11 +156,16 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                                 state.push_notification(format!("[+] Name set to [{name}]"));
                                 update = true;
                             }
+                            Action::Send {..} => {
+                                state.push_notification("[-] Not connected to a server".to_string());
+                                update = true;
+                            }
                             Action::Connect { addr } => {
                                 match establish_connection(&addr).await {
                                     Ok(s) => {
                                         state.set_server(addr);
                                         state.set_connection_status(ConnectionStatus::Established);
+                                        origin = s.local_addr().unwrap().to_string();
                                         let _ = connection_handle.insert(split_stream(s));
                                         state.push_notification("[+] Successfully connected".to_string());
                                     },
@@ -156,6 +176,10 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                                 }
                                 update = true;
                             },
+                            Action::Disconnect => {
+                                state.push_notification("[-] Not connected to a server".to_string());
+                                update = true;
+                            }
                             Action::Quit => {
                                 state.exit();
                                 update = true;
@@ -168,7 +192,6 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                         }
                     },
                     _ = shutdown_rx_state.recv() => {
-                            state.exit();
                             break;
                     }
                 }

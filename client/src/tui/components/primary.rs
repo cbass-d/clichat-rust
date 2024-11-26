@@ -11,9 +11,8 @@ use tokio::sync::mpsc::UnboundedSender;
 
 pub struct Primary {
     print_buffer: Vec<String>,
+    title: String,
 }
-
-impl Primary {}
 
 impl Component for Primary {
     fn new(state: &State, _action_tx: UnboundedSender<Action>) -> Self
@@ -22,6 +21,7 @@ impl Component for Primary {
     {
         Self {
             print_buffer: state.notifications.clone(),
+            title: state.get_server(),
         }
     }
 
@@ -31,6 +31,7 @@ impl Component for Primary {
     {
         Self {
             print_buffer: state.notifications.clone(),
+            title: state.get_server(),
         }
     }
 
@@ -40,6 +41,12 @@ impl Component for Primary {
 impl ComponentRender<RenderProps> for Primary {
     fn render(&self, frame: &mut Frame, props: RenderProps) {
         let mut rev_buffer = self.print_buffer.clone();
+        let mut title = String::new();
+        if self.title.is_empty() {
+            title = format!("CLI CHAT RUST");
+        } else {
+            title = format!("CLI CHAT RUST - ({0})", self.title);
+        }
         rev_buffer.reverse();
         let text = List::new(
             rev_buffer
@@ -51,7 +58,7 @@ impl ComponentRender<RenderProps> for Primary {
         .direction(ListDirection::BottomToTop)
         .block(
             Block::default()
-                .title("CLI CHAT RUST")
+                .title(title)
                 .borders(Borders::ALL)
                 .fg(props.border_color),
         );
