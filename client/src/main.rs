@@ -86,15 +86,7 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                         match res_stream.reader.try_read_buf(&mut buf) {
                             Ok(len) if len > 0 => {
                                 let message = String::from_utf8(buf[0..len].to_vec()).unwrap();
-                                if let Some((origin, room_option, sender, message)) = common::unpack_message(&message) {
-                                    if let Some(room) = room_option {
-                                        state.push_notification(format!("From {origin}-{sender} to {room}: {message}"));
-                                    } else {
-                                        state.push_notification(format!("From {origin}-{sender}: {message}"));
-                                    }
-                                } else {
-                                    state.push_notification("[-] Invalid message received".to_string());
-                                }
+                                state.push_notification(message);
                                 update = true;
                             },
                             Ok(_) => {
@@ -119,13 +111,27 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                                 state.push_notification(format!("[+] Name set to [{name}]"));
                                 update = true;
                             },
-                            Action::Send { data } => {
-                                let message = common::pack_message(&origin, Some("echo"), &state.get_name(), &data);
+                            Action::SendTo { arg, message } => {
+                                let message = common::pack_message(&origin, "sendto", Some(&arg), &state.get_name(), Some(&message));
                                 let len = req_handler.writer.try_write(message.as_bytes()).unwrap();
                                 let len = len.to_string();
                                 state.push_notification("[+] Bytes written to server:" .to_string() + &len);
                                 update = true;
                             },
+                            Action::Join { room } => {
+                                let message = common::pack_message(&origin, "join", Some(&room), &state.get_name(), None);
+                                let len = req_handler.writer.try_write(message.as_bytes()).unwrap();
+                                let len = len.to_string();
+                                state.push_notification("[+] Bytes written to server:" .to_string() + &len);
+                                update = true;
+                            },
+                            Action::List { opt } => {
+                                let message = common::pack_message(&origin, "list", Some(&opt), &state.get_name(), None);
+                                let len = req_handler.writer.try_write(message.as_bytes()).unwrap();
+                                let len = len.to_string();
+                                state.push_notification("[+] Bytes written to server:" .to_string() + &len);
+                                update = true;
+                            }
                             Action::Disconnect => {
                                 state.push_notification("[-] Closing connection to server".to_string());
                                 (state, connection_handle) = terminate_connection(&mut state);
@@ -156,7 +162,15 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                                 state.push_notification(format!("[+] Name set to [{name}]"));
                                 update = true;
                             }
-                            Action::Send {..} => {
+                            Action::SendTo {..} => {
+                                state.push_notification("[-] Not connected to a server".to_string());
+                                update = true;
+                            }
+                            Action::Join {..} => {
+                                state.push_notification("[-] Not connected to a server".to_string());
+                                update = true;
+                            }
+                            Action::List {..} => {
                                 state.push_notification("[-] Not connected to a server".to_string());
                                 update = true;
                             }

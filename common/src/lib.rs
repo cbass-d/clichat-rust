@@ -1,21 +1,31 @@
-pub fn pack_message(origin: &str, room: Option<&str>, sender: &str, message: &str) -> String {
+pub fn pack_message(
+    origin: &str,
+    cmd: &str,
+    arg: Option<&str>,
+    sender: &str,
+    message: Option<&str>,
+) -> String {
     let mut packed = format!("!{}", origin);
+    packed.push('#');
+    packed.push_str(cmd);
 
-    if let Some(room) = room {
+    if let Some(arg) = arg {
         packed.push('#');
-        packed.push_str(&room);
+        packed.push_str(arg);
     }
 
     packed.push('#');
-    packed.push_str(&sender);
-    packed.push('#');
-    packed.push_str(&message);
+    packed.push_str(sender);
+    if let Some(message) = message {
+        packed.push('#');
+        packed.push_str(message);
+    }
     packed.push_str("#!");
 
     packed
 }
 
-pub fn unpack_message(message: &str) -> Option<(&str, Option<&str>, &str, &str)> {
+pub fn unpack_message(message: &str) -> Option<(&str, &str, Option<&str>, &str, Option<&str>)> {
     if !message.starts_with("!") || !message.ends_with("!") {
         return None;
     }
@@ -27,19 +37,29 @@ pub fn unpack_message(message: &str) -> Option<(&str, Option<&str>, &str, &str)>
     match tokens.len() {
         4 => {
             let addr = tokens[0];
-            let room_option = None;
-            let sender = tokens[1];
-            let message = tokens[2];
+            let cmd = tokens[1];
+            let arg = Some(tokens[2]);
+            let sender = tokens[3];
 
-            Some((addr, room_option, sender, message))
+            Some((addr, cmd, arg, sender, None))
         }
         5 => {
             let addr = tokens[0];
-            let room_option = Some(tokens[1]);
+            let cmd = tokens[1];
+            let arg = None;
             let sender = tokens[2];
             let message = tokens[3];
 
-            Some((addr, room_option, sender, message))
+            Some((addr, cmd, arg, sender, Some(message)))
+        }
+        6 => {
+            let addr = tokens[0];
+            let cmd = tokens[1];
+            let arg = Some(tokens[2]);
+            let sender = tokens[3];
+            let message = tokens[4];
+
+            Some((addr, cmd, arg, sender, Some(message)))
         }
         _ => None,
     }

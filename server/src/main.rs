@@ -1,5 +1,4 @@
-use std::io::ErrorKind;
-use std::time::Duration;
+use std::{collections::HashMap, io::ErrorKind, sync::Arc, time::Duration};
 use tokio::{
     io::AsyncWriteExt,
     net::{
@@ -11,6 +10,9 @@ use tokio::{
     task::JoinSet,
 };
 
+use chat_session::{ChatSession, Command, Room};
+
+mod chat_session;
 use common;
 
 struct RequestHandler {
@@ -41,10 +43,16 @@ async fn startup_server() -> Result<TcpListener, std::io::Error> {
     return Ok(listener);
 }
 
-async fn handle_connection(stream: TcpStream, mut shutdown_rx: Receiver<Terminate>) -> Terminate {
+async fn handle_connection(
+    stream: TcpStream,
+    mut shutdown_rx: Receiver<Terminate>,
+    mut rooms_map: Arc<HashMap<String, Room>>,
+) -> Terminate {
     let client_connection = split_stream(stream);
     let (req_handler, mut res_writer) = client_connection;
-    let mut buf = Vec::with_capacity(4096);
+    let mut buf: Vec<u8> = Vec::with_capacity(4096);
+
+    let mut chat_session = ChatSession::new();
 
     loop {
         match shutdown_rx.try_recv() {
@@ -58,35 +66,44 @@ async fn handle_connection(stream: TcpStream, mut shutdown_rx: Receiver<Terminat
             Err(_) => {}
         }
 
-        match req_handler.reader.try_read_buf(&mut buf) {
-            Ok(len) if len > 0 => {
-                let message = String::from_utf8(buf[0..len].to_vec()).unwrap();
-                if let Some((origin, room_option, sender, message)) =
-                    common::unpack_message(&message)
-                {
-                    if let Some(room) = room_option {
-                        println!("From {origin}-{sender} to {room:?}: {message}");
-                    } else {
-                        println!("From {origin}-{sender}: {message}");
-                    }
-                    let packed_message =
-                        common::pack_message(SERVER_ADDR, Some("echo"), "server", message);
-                    let _ = res_writer.writer.write_all(packed_message.as_bytes()).await;
-                    let _ = res_writer.writer.flush().await;
-                } else {
-                    println!("[-] Invalid message received");
+        tokio::select! {
+            _ = req_handler.reader.readable() => {
+                match req_handler.reader.try_read_buf(&mut buf) {
+                    Ok(len) if len > 0 => {
+                        let msg = String::from_utf8(buf[0..len].to_vec()).unwrap();
+                        println!("{msg}");
+                        if let Some((origin, cmd, arg, sender, message)) = common::unpack_message(&msg) {
+                            match cmd {
+                                "join" => {},
+                                "list" => {},
+                                "sendto" => {
+                                    println!("Sending to {}, {}", arg.unwrap(), message.unwrap());
+                                },
+                                _ => {
+                                    println!("[-] Invalid command received");
+                                },
+                            }
+                        }
+                        else { println!("[-] Invalid message received"); }
+                    },
+                    Ok(_) => {
+                        println!("[-] Stream closed by client");
+                        break Terminate::ClientClosed;
+                    },
+                    Err(ref e) if e.kind() == ErrorKind::WouldBlock => {},
+                    Err(e) => {
+                        let err = e.to_string();
+                        println!("[-] Failed to read from stream: {err}");
+                        break Terminate::SocketError;
+                    },
                 }
             }
-            Ok(_) => {
-                break Terminate::ClientClosed;
-            }
-            Err(ref e) if e.kind() == ErrorKind::WouldBlock => continue,
-            Err(e) => {
-                println!("[-] Failed to read from stream: {e}");
-                break Terminate::SocketError;
-            }
+            msg = chat_session.recv() => {
+                if let Some(msg) = msg {
+                    println!("[+] msg");
+                }
+            },
         }
-        buf.clear();
     }
 }
 
@@ -102,8 +119,14 @@ async fn main() {
     };
     let mut set: JoinSet<Terminate> = JoinSet::new();
     let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel::<Terminate>(1);
-    println!("[+] Server started...\n[+] Listening for connections...");
     let mut ticker = tokio::time::interval(Duration::from_millis(250));
+    let main_room = Room::new("main");
+    let mut rooms_map = HashMap::new();
+    rooms_map.insert("main".to_string(), main_room);
+    let rooms_map: Arc<HashMap<String, Room>> = Arc::new(rooms_map);
+    let root_rooms_map = Arc::clone(&rooms_map);
+
+    println!("[+] Server started...\n[+] Listening for connections...");
 
     loop {
         tokio::select! {
@@ -114,7 +137,7 @@ async fn main() {
                 break;
             },
             Ok((stream, _addr)) = listener.accept() => {
-                set.spawn(handle_connection(stream, shutdown_rx.resubscribe()));
+                set.spawn(handle_connection(stream, shutdown_rx.resubscribe(), Arc::clone(&rooms_map)));
             }
         }
     }

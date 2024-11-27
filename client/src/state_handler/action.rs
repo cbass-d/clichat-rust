@@ -2,7 +2,9 @@ pub enum Action {
     Connect { addr: String },
     SetName { name: String },
     Disconnect,
-    Send { data: String },
+    SendTo { arg: String, message: String },
+    Join { room: String },
+    List { opt: String },
     Quit,
     Invalid,
 }
@@ -33,18 +35,44 @@ pub fn parse_command(string: String) -> Option<Action> {
 
                     return Some(Action::Connect { addr });
                 }
-                "send" => {
-                    let mut msg = String::new();
+                "sendto" => {
+                    let arg = match tokens.next() {
+                        Some(arg) => arg.to_string(),
+                        None => {
+                            return None;
+                        }
+                    };
+                    let mut message = String::new();
                     while let Some(part) = tokens.next() {
-                        msg += part;
-                        msg += " ";
+                        message += part;
+                        message += " ";
                     }
-                    msg = msg.trim().to_string();
+                    message = message.trim().to_string();
 
-                    if msg == "" {
+                    if message == "" {
                         return None;
                     }
-                    return Some(Action::Send { data: msg });
+                    return Some(Action::SendTo { arg, message });
+                }
+                "list" => {
+                    let opt = match tokens.next() {
+                        Some(opt) => opt.to_string(),
+                        None => {
+                            return None;
+                        }
+                    };
+
+                    return Some(Action::List { opt });
+                }
+                "join" => {
+                    let room = match tokens.next() {
+                        Some(room) => room.to_string(),
+                        None => {
+                            return None;
+                        }
+                    };
+
+                    return Some(Action::Join { room });
                 }
                 "disconnect" => {
                     return Some(Action::Disconnect);

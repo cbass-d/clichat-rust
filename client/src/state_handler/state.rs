@@ -26,7 +26,7 @@ impl Default for State {
         startup_notices
             .push("[*] Not connected to server. To connect use \"/connect\" command".to_string());
         startup_notices.push("\tExample: /connect 127.0.0.1:6667".to_string());
-        startup_notices.push("To send message to server: /send [msg]".to_string());
+        startup_notices.push("To send message to server: /sendto [arg] [msg]".to_string());
 
         State {
             connection_status: ConnectionStatus::Unitiliazed,
