@@ -74,10 +74,30 @@ async fn handle_connection(
                         println!("{msg}");
                         if let Some((origin, cmd, arg, sender, message)) = common::unpack_message(&msg) {
                             match cmd {
-                                "join" => {},
-                                "list" => {},
+                                "join" => {
+                                    println!("{}", arg.unwrap());
+                                },
+                                "list" => {
+                                    match arg.unwrap() {
+                                        "rooms" => {
+                                            println!("Current rooms:");
+                                            for (room_name, _) in rooms_map.as_ref().into_iter() {
+                                                println!("{room_name}");
+                                            }
+                                        },
+                                        "users" => {
+                                            println!("TODO");
+                                        },
+                                        _ => {
+                                            println!("[-] Invalid option for list");
+                                        }
+                                    }
+                                },
                                 "sendto" => {
-                                    println!("Sending to {}, {}", arg.unwrap(), message.unwrap());
+                                    println!("Sending to {}: {}", arg.unwrap(), message.unwrap());
+                                    if let Some(room) = rooms_map.get(arg.unwrap()) {
+                                        let _ = room.broadcast_tx.send(message.unwrap().to_string());
+                                    }
                                 },
                                 _ => {
                                     println!("[-] Invalid command received");
@@ -98,12 +118,17 @@ async fn handle_connection(
                     },
                 }
             }
-            msg = chat_session.recv() => {
-                if let Some(msg) = msg {
+            message = chat_session.recv() => {
+                if let Some(message) = message {
                     println!("[+] msg");
                 }
             },
+            terminate = shutdown_rx.recv() => {
+                break terminate.unwrap();
+            }
         }
+
+        buf.clear();
     }
 }
 
@@ -124,7 +149,6 @@ async fn main() {
     let mut rooms_map = HashMap::new();
     rooms_map.insert("main".to_string(), main_room);
     let rooms_map: Arc<HashMap<String, Room>> = Arc::new(rooms_map);
-    let root_rooms_map = Arc::clone(&rooms_map);
 
     println!("[+] Server started...\n[+] Listening for connections...");
 
@@ -141,6 +165,5 @@ async fn main() {
             }
         }
     }
-
     set.join_all().await;
 }
