@@ -1,5 +1,5 @@
 # CLI CHAT RUST
-Insipred by https://github.com/Yengas/rust-chat-server
+Inspired by https://github.com/Yengas/rust-chat-server
 
 This project was used as a tool to learn Async programming, networking programming and Rust itself 
 ### Client
