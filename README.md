@@ -1,4 +1,7 @@
 # CLI CHAT RUST
+Insipred by https://github.com/Yengas/rust-chat-server
+
+This project was used as a tool to learn Async programming, networking programming and Rust itself 
 ### Client
 Client can be ran/built from root folder ('clichat_rust') using:
 ```
