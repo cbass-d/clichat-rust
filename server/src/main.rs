@@ -1,4 +1,9 @@
-use std::{collections::HashMap, io::ErrorKind, sync::Arc, time::Duration};
+use std::{
+    collections::HashMap,
+    io::ErrorKind,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 use tokio::{
     io::AsyncWriteExt,
     net::{
@@ -10,9 +15,11 @@ use tokio::{
     task::JoinSet,
 };
 
-use chat_session::{ChatSession, Command, Room};
+use chat_session::ChatSession;
+use room::{room_manager::RoomManager, Room, UserHandle};
 
 mod chat_session;
+mod room;
 use common;
 
 struct RequestHandler {
@@ -46,13 +53,12 @@ async fn startup_server() -> Result<TcpListener, std::io::Error> {
 async fn handle_connection(
     stream: TcpStream,
     mut shutdown_rx: Receiver<Terminate>,
-    mut rooms_map: Arc<HashMap<String, Room>>,
+    room_manager: Arc<RoomManager>,
 ) -> Terminate {
     let client_connection = split_stream(stream);
     let (req_handler, mut res_writer) = client_connection;
     let mut buf: Vec<u8> = Vec::with_capacity(4096);
-
-    let mut chat_session = ChatSession::new();
+    let mut chat_session = ChatSession::new("name", room_manager.clone());
 
     loop {
         match shutdown_rx.try_recv() {
@@ -75,14 +81,16 @@ async fn handle_connection(
                         if let Some((origin, cmd, arg, sender, message)) = common::unpack_message(&msg) {
                             match cmd {
                                 "join" => {
-                                    println!("{}", arg.unwrap());
+                                    let res = chat_session.join_room(arg.unwrap().to_string()).await;
+                                    println!("{res}");
                                 },
                                 "list" => {
                                     match arg.unwrap() {
                                         "rooms" => {
-                                            println!("Current rooms:");
-                                            for (room_name, _) in rooms_map.as_ref().into_iter() {
-                                                println!("{room_name}");
+                                            let rooms: Vec<String> = chat_session.rooms.clone().into_keys().collect();
+                                            println!("Rooms:");
+                                            for room in rooms {
+                                            println!("{room}");
                                             }
                                         },
                                         "users" => {
@@ -95,9 +103,8 @@ async fn handle_connection(
                                 },
                                 "sendto" => {
                                     println!("Sending to {}: {}", arg.unwrap(), message.unwrap());
-                                    if let Some(room) = rooms_map.get(arg.unwrap()) {
-                                        let _ = room.broadcast_tx.send(message.unwrap().to_string());
-                                    }
+                                    let user_handle = chat_session.rooms.get(arg.unwrap()).unwrap();
+                                    user_handle.send_message(message.unwrap().to_owned());
                                 },
                                 _ => {
                                     println!("[-] Invalid command received");
@@ -120,7 +127,8 @@ async fn handle_connection(
             }
             message = chat_session.recv() => {
                 if let Some(message) = message {
-                    println!("[+] msg");
+                    let _ = res_writer.writer.write_all(message.as_bytes()).await;
+                    println!("{message}");
                 }
             },
             terminate = shutdown_rx.recv() => {
@@ -146,9 +154,8 @@ async fn main() {
     let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel::<Terminate>(1);
     let mut ticker = tokio::time::interval(Duration::from_millis(250));
     let main_room = Room::new("main");
-    let mut rooms_map = HashMap::new();
-    rooms_map.insert("main".to_string(), main_room);
-    let rooms_map: Arc<HashMap<String, Room>> = Arc::new(rooms_map);
+    let server_rooms: Vec<Arc<Mutex<Room>>> = vec![Arc::new(Mutex::new(main_room))];
+    let room_manager = Arc::new(RoomManager::new(server_rooms));
 
     println!("[+] Server started...\n[+] Listening for connections...");
 
@@ -161,7 +168,7 @@ async fn main() {
                 break;
             },
             Ok((stream, _addr)) = listener.accept() => {
-                set.spawn(handle_connection(stream, shutdown_rx.resubscribe(), Arc::clone(&rooms_map)));
+                set.spawn(handle_connection(stream, shutdown_rx.resubscribe(), Arc::clone(&room_manager)));
             }
         }
     }
