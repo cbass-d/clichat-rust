@@ -1,19 +1,12 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tokio::{
-    io::Result,
-    sync::broadcast::{self},
     sync::mpsc::{self},
     task::JoinSet,
 };
 
 use super::room::room_manager::RoomManager;
-use super::room::{Room, UserHandle};
-
-pub enum Command {
-    List { opt: String },
-    Join { room: String },
-}
+use super::room::UserHandle;
 
 pub struct ChatSession {
     name: String,
@@ -51,8 +44,7 @@ impl ChatSession {
 
                 async move {
                     while let Ok(message) = broadcast_rx.recv().await {
-                        let len = mpsc_tx.send(message).await;
-                        println!("{len:?}");
+                        let _ = mpsc_tx.send(message).await;
                     }
                 }
             });

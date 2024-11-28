@@ -70,7 +70,6 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
 
         let mut ticker = tokio::time::interval(Duration::from_millis(250));
         let mut connection_handle: Option<ConnectionHandler> = None;
-        let mut origin = String::new();
         let mut buf = Vec::with_capacity(4096);
         let mut update: bool = false;
 
@@ -85,8 +84,37 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                     _ = res_stream.reader.readable() => {
                         match res_stream.reader.try_read_buf(&mut buf) {
                             Ok(len) if len > 0 => {
-                                let message = String::from_utf8(buf[0..len].to_vec()).unwrap();
-                                state.push_notification(message);
+                                let raw_message = String::from_utf8(buf[0..len].to_vec()).unwrap();
+                                if let Some((cmd, arg, sender, message)) = common::unpack_message(&raw_message) {
+                                    match cmd {
+                                        "roommessage" => {
+                                            let room = arg.unwrap();
+                                            let message = message.unwrap();
+                                            state.push_notification(format!("[#{room}] {sender}: {message}"));
+                                        },
+                                        "joined" => {
+                                            let message = message.unwrap();
+                                            state.push_notification(message.to_string());
+                                        },
+                                        "rooms" => {
+                                            if let Some(message) = message {
+                                                let mut rooms: Vec<&str> = Vec::new();
+                                                if message.contains(',') {
+                                                    rooms = message.split(',').collect();
+                                                } else {
+                                                    rooms.push(message);
+                                                }
+                                                state.push_notification("[+] Joined rooms:".to_string());
+                                                for room in rooms {
+                                                    state.push_notification(format!("[#{room}]"));
+                                                }
+                                                state.push_notification("[+] End of rooms".to_string());
+                                            }
+                                            state.push_notification("[-] No joined rooms".to_string());
+                                        },
+                                        _ => {},
+                                    }
+                                }
                                 update = true;
                             },
                             Ok(_) => {
@@ -112,24 +140,18 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                                 update = true;
                             },
                             Action::SendTo { arg, message } => {
-                                let message = common::pack_message(&origin, "sendto", Some(&arg), &state.get_name(), Some(&message));
-                                let len = req_handler.writer.try_write(message.as_bytes()).unwrap();
-                                let len = len.to_string();
-                                state.push_notification("[+] Bytes written to server:" .to_string() + &len);
+                                let message = common::pack_message("sendto", Some(&arg), &state.get_name(), Some(&message));
+                                let _ = req_handler.writer.try_write(message.as_bytes()).unwrap();
                                 update = true;
                             },
                             Action::Join { room } => {
-                                let message = common::pack_message(&origin, "join", Some(&room), &state.get_name(), None);
-                                let len = req_handler.writer.try_write(message.as_bytes()).unwrap();
-                                let len = len.to_string();
-                                state.push_notification("[+] Bytes written to server:" .to_string() + &len);
+                                let message = common::pack_message("join", Some(&room), &state.get_name(), None);
+                                let _ = req_handler.writer.try_write(message.as_bytes()).unwrap();
                                 update = true;
                             },
                             Action::List { opt } => {
-                                let message = common::pack_message(&origin, "list", Some(&opt), &state.get_name(), None);
-                                let len = req_handler.writer.try_write(message.as_bytes()).unwrap();
-                                let len = len.to_string();
-                                state.push_notification("[+] Bytes written to server:" .to_string() + &len);
+                                let message = common::pack_message("list", Some(&opt), &state.get_name(), None);
+                                let _ = req_handler.writer.try_write(message.as_bytes()).unwrap();
                                 update = true;
                             }
                             Action::Disconnect => {
@@ -149,7 +171,7 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                         }
                     },
                     _ = shutdown_rx_state.recv() => {
-                            break;
+                        break;
                     }
                 }
             } else {
@@ -179,7 +201,6 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                                     Ok(s) => {
                                         state.set_server(addr);
                                         state.set_connection_status(ConnectionStatus::Established);
-                                        origin = s.local_addr().unwrap().to_string();
                                         let _ = connection_handle.insert(split_stream(s));
                                         state.push_notification("[+] Successfully connected".to_string());
                                     },
@@ -202,7 +223,6 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                                 state.push_notification("[-] Invalid command".to_string());
                                 update = true;
                             },
-                            _ => {}
                         }
                     },
                     _ = shutdown_rx_state.recv() => {

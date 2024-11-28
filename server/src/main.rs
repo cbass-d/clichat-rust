@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     io::ErrorKind,
     sync::{Arc, Mutex},
     time::Duration,
@@ -16,7 +15,7 @@ use tokio::{
 };
 
 use chat_session::ChatSession;
-use room::{room_manager::RoomManager, Room, UserHandle};
+use room::{room_manager::RoomManager, Room};
 
 mod chat_session;
 mod room;
@@ -50,7 +49,7 @@ async fn startup_server() -> Result<TcpListener, std::io::Error> {
     return Ok(listener);
 }
 
-async fn handle_connection(
+async fn handle_client(
     stream: TcpStream,
     mut shutdown_rx: Receiver<Terminate>,
     room_manager: Arc<RoomManager>,
@@ -62,13 +61,12 @@ async fn handle_connection(
 
     loop {
         match shutdown_rx.try_recv() {
-            Ok(msg) => {
-                break msg;
+            Ok(termination) => {
+                break termination;
             }
             Err(TryRecvError::Closed) => {
                 break Terminate::ServerClose;
             }
-            Err(TryRecvError::Empty) => {}
             Err(_) => {}
         }
 
@@ -76,24 +74,31 @@ async fn handle_connection(
             _ = req_handler.reader.readable() => {
                 match req_handler.reader.try_read_buf(&mut buf) {
                     Ok(len) if len > 0 => {
-                        let msg = String::from_utf8(buf[0..len].to_vec()).unwrap();
-                        println!("{msg}");
-                        if let Some((origin, cmd, arg, sender, message)) = common::unpack_message(&msg) {
+                        let raw_message = String::from_utf8(buf[0..len].to_vec()).unwrap();
+                        if let Some((cmd, arg, sender, message)) = common::unpack_message(&raw_message) {
                             match cmd {
                                 "join" => {
-                                    let res = chat_session.join_room(arg.unwrap().to_string()).await;
-                                    println!("{res}");
+                                    match arg {
+                                        Some(arg) => {
+                                            let result = chat_session.join_room(arg.to_string()).await;
+                                            let message = common::pack_message("joined", Some(arg), "server", Some(&result));
+                                            let _ = res_writer.writer.write_all(message.as_bytes()).await;
+                                        },
+                                        None => {
+                                            println!("[-] Invalid argument");
+                                        }
+                                    }
                                 },
                                 "list" => {
-                                    match arg.unwrap() {
-                                        "rooms" => {
+                                    match arg {
+                                        Some("rooms") => {
                                             let rooms: Vec<String> = chat_session.rooms.clone().into_keys().collect();
-                                            println!("Rooms:");
-                                            for room in rooms {
-                                            println!("{room}");
-                                            }
+                                            let content = rooms.join(",");
+                                            let message = common::pack_message("rooms", None, "server", Some(&content));
+                                            let _ = res_writer.writer.write_all(message.as_bytes()).await;
+                                            println!("{message}");
                                         },
-                                        "users" => {
+                                        Some("users") => {
                                             println!("TODO");
                                         },
                                         _ => {
@@ -102,16 +107,32 @@ async fn handle_connection(
                                     }
                                 },
                                 "sendto" => {
-                                    println!("Sending to {}: {}", arg.unwrap(), message.unwrap());
-                                    let user_handle = chat_session.rooms.get(arg.unwrap()).unwrap();
-                                    user_handle.send_message(message.unwrap().to_owned());
+                                    match arg {
+                                        Some(room) => {
+                                            if let Some(user_handle) = chat_session.rooms.get(room) {
+                                                match message {
+                                                    Some(message) => {
+                                                        let message = common::pack_message("roommessage", Some(room), sender, Some(message));
+                                                        user_handle.send_message(message.to_string());
+                                                    },
+                                                    None => {
+                                                        println!("[-] No message provided");
+                                                    }
+                                                }
+                                            }
+                                            else {println!("[-] Room not found: {room}");}
+                                        },
+                                        None => {
+                                            println!("[-] Invalid argument provided");
+                                        },
+                                    }
                                 },
                                 _ => {
                                     println!("[-] Invalid command received");
                                 },
                             }
                         }
-                        else { println!("[-] Invalid message received"); }
+                        else { println!("[-] Invalid raw message received"); }
                     },
                     Ok(_) => {
                         println!("[-] Stream closed by client");
@@ -150,15 +171,15 @@ async fn main() {
             panic!();
         }
     };
-    let mut set: JoinSet<Terminate> = JoinSet::new();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel::<Terminate>(1);
-    let mut ticker = tokio::time::interval(Duration::from_millis(250));
+    let mut connections_set: JoinSet<Terminate> = JoinSet::new();
+    let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel::<Terminate>(10);
     let main_room = Room::new("main");
     let server_rooms: Vec<Arc<Mutex<Room>>> = vec![Arc::new(Mutex::new(main_room))];
     let room_manager = Arc::new(RoomManager::new(server_rooms));
 
     println!("[+] Server started...\n[+] Listening for connections...");
 
+    let mut ticker = tokio::time::interval(Duration::from_millis(250));
     loop {
         tokio::select! {
             _ = ticker.tick() => {},
@@ -167,10 +188,10 @@ async fn main() {
                 let _ = shutdown_tx.send(Terminate::ServerClose);
                 break;
             },
-            Ok((stream, _addr)) = listener.accept() => {
-                set.spawn(handle_connection(stream, shutdown_rx.resubscribe(), Arc::clone(&room_manager)));
+            Ok((stream, _)) = listener.accept() => {
+                connections_set.spawn(handle_client(stream, shutdown_rx.resubscribe(), Arc::clone(&room_manager)));
             }
         }
     }
-    set.join_all().await;
+    connections_set.join_all().await;
 }
