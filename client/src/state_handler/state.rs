@@ -2,13 +2,13 @@
 pub enum ConnectionStatus {
     Established,
     Connecting,
-    Bricked,
     Unitiliazed,
 }
 
 #[derive(Clone)]
 pub struct State {
     connection_status: ConnectionStatus,
+    registered: bool,
     current_server: String,
     name: String,
     pub notifications: Vec<String>,
@@ -37,6 +37,7 @@ impl Default for State {
 
         State {
             connection_status: ConnectionStatus::Unitiliazed,
+            registered: false,
             current_server: String::new(),
             name: String::from("anon"), // Default name
             notifications: startup_notices,
@@ -72,6 +73,14 @@ impl State {
 
     pub fn get_connection_status(&self) -> ConnectionStatus {
         self.connection_status.clone()
+    }
+
+    pub fn registered(&self) -> bool {
+        self.registered
+    }
+
+    pub fn set_as_registered(&mut self) {
+        self.registered = true;
     }
 
     pub fn exit(&mut self) {

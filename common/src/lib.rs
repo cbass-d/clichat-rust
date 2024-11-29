@@ -26,45 +26,22 @@ pub fn unpack_message(message: &str) -> Option<(&str, Option<&str>, &str, Option
     // Remove starting and ending !s
     let content = &message[1..message.len() - 1];
     let tokens: Vec<&str> = content.split('#').filter(|s| !s.is_empty()).collect();
+    let cmd = tokens[0];
 
-    match tokens[0] {
-        "register" => {
-            let cmd = tokens[0];
+    match cmd {
+        "register" | "join" | "list" | "name" => {
             let arg = tokens[1];
             let sender = tokens[2];
             Some((cmd, Some(arg), sender, None))
         }
-        "registered" => {
-            let cmd = tokens[0];
+        "registered" | "joined" => {
             let arg = tokens[1];
-            let sender = tokens[1];
+            let sender = tokens[2];
             let message = tokens[3];
 
             Some((cmd, Some(arg), sender, Some(message)))
         }
-        "join" => {
-            let cmd = tokens[0];
-            let arg = tokens[1];
-            let sender = tokens[2];
-            Some((cmd, Some(arg), sender, None))
-        }
-        "joined" => {
-            let cmd = tokens[0];
-            let arg = tokens[1];
-            let sender = tokens[1];
-            let message = tokens[3];
-
-            Some((cmd, Some(arg), sender, Some(message)))
-        }
-        "list" => {
-            let cmd = tokens[0];
-            let arg = tokens[1];
-            let sender = tokens[2];
-
-            Some((cmd, Some(arg), sender, None))
-        }
-        "rooms" => {
-            let cmd = tokens[0];
+        "rooms" | "users" => {
             let sender = tokens[1];
             let message;
             if tokens.len() < 3 {
@@ -75,50 +52,13 @@ pub fn unpack_message(message: &str) -> Option<(&str, Option<&str>, &str, Option
 
             Some((cmd, None, sender, message))
         }
-        "users" => {
-            let cmd = tokens[0];
-            let sender = tokens[1];
-            let message;
-            if tokens.len() < 3 {
-                message = None;
-            } else {
-                message = Some(tokens[2]);
-            }
-
-            Some((cmd, None, sender, message))
-        }
-        "name" => {
-            let cmd = tokens[0];
-            let arg = tokens[1];
-            let sender = tokens[2];
-
-            Some((cmd, Some(arg), sender, None))
-        }
-        "changedname" => {
-            let cmd = tokens[0];
+        "changedname" | "sendto" | "roommessage" => {
             let arg = tokens[1];
             let sender = tokens[2];
             let message = tokens[3];
 
             Some((cmd, Some(arg), sender, Some(message)))
         }
-        "sendto" => {
-            let cmd = tokens[0];
-            let arg = tokens[1];
-            let sender = tokens[2];
-            let message = tokens[3];
-
-            Some((cmd, Some(arg), sender, Some(message)))
-        }
-        "roommessage" => {
-            let cmd = tokens[0];
-            let arg = tokens[1];
-            let sender = tokens[2];
-            let message = tokens[3];
-
-            Some((cmd, Some(arg), sender, Some(message)))
-        }
-
         _ => None,
     }
 }

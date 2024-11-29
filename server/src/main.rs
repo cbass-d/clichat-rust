@@ -131,9 +131,7 @@ async fn handle_client(
                                             let message = common::pack_message("joined", Some(arg), "server", Some(&result));
                                             let _ = res_writer.writer.write_all(message.as_bytes()).await;
                                         },
-                                        None => {
-                                            println!("[-] Invalid argument");
-                                        }
+                                        None => {}
                                     }
                                 },
                                 "list" => {
@@ -153,9 +151,7 @@ async fn handle_client(
                                             let response = common::pack_message("users", None, "server", Some(&response));
                                             let _ = res_writer.writer.write_all(response.as_bytes()).await;
                                         },
-                                        _ => {
-                                            println!("[-] Invalid option for list");
-                                        }
+                                        _ => {}
                                     }
                                 },
                                 "sendto" => {
