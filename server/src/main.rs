@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     io::ErrorKind,
     sync::{Arc, Mutex},
     time::Duration,
@@ -53,6 +54,7 @@ async fn handle_client(
     stream: TcpStream,
     mut shutdown_rx: Receiver<Terminate>,
     room_manager: Arc<RoomManager>,
+    server_users: Arc<Mutex<HashSet<String>>>,
 ) -> Terminate {
     let client_connection = split_stream(stream);
     let (req_handler, mut res_writer) = client_connection;
@@ -77,6 +79,51 @@ async fn handle_client(
                         let raw_message = String::from_utf8(buf[0..len].to_vec()).unwrap();
                         if let Some((cmd, arg, sender, message)) = common::unpack_message(&raw_message) {
                             match cmd {
+                                "register" => {
+                                    match arg {
+                                        Some(name) => {
+                                            let mut response = String::new();
+                                            {
+                                                let mut server_users = server_users.lock().unwrap();
+                                                if server_users.contains(name) {
+                                                    response = format!("[-] [{name}] as username is already in use");
+                                                    response = common::pack_message("registered", Some("failed"), "server", Some(&response));
+                                                } else {
+                                                    server_users.insert(name.to_string());
+                                                    response = format!("[+] Registered as {name}");
+                                                    response = common::pack_message("registered", Some("success"), "server", Some(&response));
+                                                }
+                                            }
+                                            let _ = res_writer.writer.write_all(response.as_bytes()).await;
+                                        },
+                                        None => {
+                                            let message = "[-] Invalid or no argument received";
+                                            let message = common::pack_message("registered", Some("failed"), "server", Some(&message));
+                                            let _ = res_writer.writer.write_all(message.as_bytes()).await;
+                                        },
+                                    }
+                                }
+                                "name" => {
+                                    let mut response: String;
+                                    if arg == None {
+                                        response = "[-] Invalid request recieved".to_string();
+                                        response = common::pack_message("name", None, "server", Some(&response));
+                                    } else {
+                                        let mut server_users = server_users.lock().unwrap();
+                                        let new_name = arg.unwrap();
+                                        if server_users.contains(new_name) {
+                                            response = format!("[-] [{new_name}] as username is already in use");
+                                            response = common::pack_message("changedname", Some("failed"), "server", Some(&response));
+                                        } else {
+                                            let old_name = sender;
+                                            let _ = server_users.remove(old_name);
+                                            server_users.insert(new_name.to_string());
+                                            response = format!("[+] Username changed to [{new_name}]");
+                                            response = common::pack_message("changedname", Some(new_name), "server", Some(&response));
+                                        }
+                                    }
+                                    let _ = res_writer.writer.write_all(response.as_bytes()).await;
+                                }
                                 "join" => {
                                     match arg {
                                         Some(arg) => {
@@ -96,10 +143,15 @@ async fn handle_client(
                                             let content = rooms.join(",");
                                             let message = common::pack_message("rooms", None, "server", Some(&content));
                                             let _ = res_writer.writer.write_all(message.as_bytes()).await;
-                                            println!("{message}");
                                         },
                                         Some("users") => {
-                                            println!("TODO");
+                                            let mut response = String::new();
+                                            {
+                                                let server_users = server_users.lock().unwrap();
+                                                response = Vec::from_iter(server_users.clone().into_iter()).into_iter().collect::<Vec<String>>().join(",");
+                                            }
+                                            let response = common::pack_message("users", None, "server", Some(&response));
+                                            let _ = res_writer.writer.write_all(response.as_bytes()).await;
                                         },
                                         _ => {
                                             println!("[-] Invalid option for list");
@@ -149,7 +201,6 @@ async fn handle_client(
             message = chat_session.recv() => {
                 if let Some(message) = message {
                     let _ = res_writer.writer.write_all(message.as_bytes()).await;
-                    println!("{message}");
                 }
             },
             terminate = shutdown_rx.recv() => {
@@ -173,9 +224,14 @@ async fn main() {
     };
     let mut connections_set: JoinSet<Terminate> = JoinSet::new();
     let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel::<Terminate>(10);
+
+    // Default server rooms
     let main_room = Room::new("main");
     let server_rooms: Vec<Arc<Mutex<Room>>> = vec![Arc::new(Mutex::new(main_room))];
     let room_manager = Arc::new(RoomManager::new(server_rooms));
+
+    // Users
+    let server_users: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
 
     println!("[+] Server started...\n[+] Listening for connections...");
 
@@ -189,7 +245,7 @@ async fn main() {
                 break;
             },
             Ok((stream, _)) = listener.accept() => {
-                connections_set.spawn(handle_client(stream, shutdown_rx.resubscribe(), Arc::clone(&room_manager)));
+                connections_set.spawn(handle_client(stream, shutdown_rx.resubscribe(), Arc::clone(&room_manager), Arc::clone(&server_users)));
             }
         }
     }

@@ -27,38 +27,98 @@ pub fn unpack_message(message: &str) -> Option<(&str, Option<&str>, &str, Option
     let content = &message[1..message.len() - 1];
     let tokens: Vec<&str> = content.split('#').filter(|s| !s.is_empty()).collect();
 
-    match tokens.len() {
-        2 => {
+    match tokens[0] {
+        "register" => {
+            let cmd = tokens[0];
+            let arg = tokens[1];
+            let sender = tokens[2];
+            Some((cmd, Some(arg), sender, None))
+        }
+        "registered" => {
+            let cmd = tokens[0];
+            let arg = tokens[1];
+            let sender = tokens[1];
+            let message = tokens[3];
+
+            Some((cmd, Some(arg), sender, Some(message)))
+        }
+        "join" => {
+            let cmd = tokens[0];
+            let arg = tokens[1];
+            let sender = tokens[2];
+            Some((cmd, Some(arg), sender, None))
+        }
+        "joined" => {
+            let cmd = tokens[0];
+            let arg = tokens[1];
+            let sender = tokens[1];
+            let message = tokens[3];
+
+            Some((cmd, Some(arg), sender, Some(message)))
+        }
+        "list" => {
+            let cmd = tokens[0];
+            let arg = tokens[1];
+            let sender = tokens[2];
+
+            Some((cmd, Some(arg), sender, None))
+        }
+        "rooms" => {
             let cmd = tokens[0];
             let sender = tokens[1];
-
-            Some((cmd, None, sender, None))
-        }
-        3 => {
-            let cmd = tokens[0];
-            let arg;
             let message;
-            let sender;
-            if cmd == "rooms" {
-                arg = None;
-                sender = tokens[1];
-                message = Some(tokens[2]);
-            } else {
-                arg = Some(tokens[1]);
-                sender = tokens[2];
+            if tokens.len() < 3 {
                 message = None;
+            } else {
+                message = Some(tokens[2]);
             }
 
-            Some((cmd, arg, sender, message))
+            Some((cmd, None, sender, message))
         }
-        4 => {
+        "users" => {
             let cmd = tokens[0];
-            let arg = Some(tokens[1]);
+            let sender = tokens[1];
+            let message;
+            if tokens.len() < 3 {
+                message = None;
+            } else {
+                message = Some(tokens[2]);
+            }
+
+            Some((cmd, None, sender, message))
+        }
+        "name" => {
+            let cmd = tokens[0];
+            let arg = tokens[1];
+            let sender = tokens[2];
+
+            Some((cmd, Some(arg), sender, None))
+        }
+        "changedname" => {
+            let cmd = tokens[0];
+            let arg = tokens[1];
             let sender = tokens[2];
             let message = tokens[3];
 
-            Some((cmd, arg, sender, Some(message)))
+            Some((cmd, Some(arg), sender, Some(message)))
         }
+        "sendto" => {
+            let cmd = tokens[0];
+            let arg = tokens[1];
+            let sender = tokens[2];
+            let message = tokens[3];
+
+            Some((cmd, Some(arg), sender, Some(message)))
+        }
+        "roommessage" => {
+            let cmd = tokens[0];
+            let arg = tokens[1];
+            let sender = tokens[2];
+            let message = tokens[3];
+
+            Some((cmd, Some(arg), sender, Some(message)))
+        }
+
         _ => None,
     }
 }
