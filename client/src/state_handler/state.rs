@@ -21,12 +21,19 @@ impl Default for State {
 
         startup_notices
             .push("[*] No nickname set. To set one use the \"/name\" command".to_string());
-        startup_notices.push("\tExample: /name jon".to_string());
+        startup_notices.push("    Example: /name jon".to_string());
 
         startup_notices
             .push("[*] Not connected to server. To connect use \"/connect\" command".to_string());
-        startup_notices.push("\tExample: /connect 127.0.0.1:6667".to_string());
-        startup_notices.push("To send message to server: /sendto [arg] [msg]".to_string());
+        startup_notices.push("    Example: /connect 127.0.0.1:6667".to_string());
+        startup_notices.push("[*] Server has one default [#main] room".to_string());
+        startup_notices.push("    To join use: /join main".to_string());
+        startup_notices
+            .push("    To send message to server room: /sendto {room} {msg}".to_string());
+        startup_notices.push("    To change name on server use the \"/name\" command".to_string());
+        startup_notices.push("    Username must be unique on server".to_string());
+        startup_notices.push("    To list users: /list users".to_string());
+        startup_notices.push("[*] To list joined rooms: /list rooms".to_string());
 
         State {
             connection_status: ConnectionStatus::Unitiliazed,
