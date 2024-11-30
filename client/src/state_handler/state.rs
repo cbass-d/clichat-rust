@@ -31,7 +31,9 @@ impl Default for State {
         startup_notices
             .push("    To send message to server room: /sendto {room} {msg}".to_string());
         startup_notices.push("    To change name on server use the \"/name\" command".to_string());
-        startup_notices.push("    Username must be unique on server".to_string());
+        startup_notices.push(
+            "    Username must be unique on server (besides the default of \"anon\")".to_string(),
+        );
         startup_notices.push("    To list users: /list users".to_string());
         startup_notices.push("[*] To list joined rooms: /list rooms".to_string());
 

@@ -29,7 +29,7 @@ pub fn unpack_message(message: &str) -> Option<(&str, Option<&str>, &str, Option
     let cmd = tokens[0];
 
     match cmd {
-        "register" | "join" | "list" | "name" => {
+        "register" | "join" | "list" | "name" | "create" | "created" => {
             let arg = tokens[1];
             let sender = tokens[2];
             Some((cmd, Some(arg), sender, None))

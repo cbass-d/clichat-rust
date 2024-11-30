@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io::Result,
     sync::{Arc, Mutex},
 };
@@ -38,6 +38,10 @@ impl RoomManager {
                 return None;
             }
         }
+    }
+
+    pub fn get_rooms(&self) -> HashSet<String> {
+        HashSet::from_iter(self.rooms.clone().into_keys().into_iter())
     }
 
     pub async fn drop_user_handle(&self, handle: UserHandle) -> Result<()> {

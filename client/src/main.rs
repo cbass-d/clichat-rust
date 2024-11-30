@@ -104,7 +104,7 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                                                 } else {
                                                     rooms.push(message);
                                                 }
-                                                state.push_notification("[+] Joined rooms:".to_string());
+                                                state.push_notification("[+] List of rooms:".to_string());
                                                 for room in rooms {
                                                     state.push_notification(format!("[#{room}]"));
                                                 }
@@ -163,6 +163,17 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                                                 _ => {}
                                             }
                                         },
+                                        "created" => {
+                                            match arg {
+                                                Some("success") => {
+                                                    state.push_notification("[+] Successfully created room".to_string());
+                                                },
+                                                Some("failed") => {
+                                                    state.push_notification("[-] Failed to create room".to_string());
+                                                },
+                                                _ => {}
+                                            }
+                                        }
                                         _ => {},
                                     }
                                 }
@@ -202,7 +213,11 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                             Action::List { opt } => {
                                 let message = common::pack_message("list", Some(&opt), &state.get_name(), None);
                                 let _ = req_handler.writer.write_all(message.as_bytes()).await;
-                            }
+                            },
+                            Action::Create { room } => {
+                                let message = common::pack_message("create", Some(&room), &state.get_name(), None);
+                                let _ = req_handler.writer.write_all(message.as_bytes()).await;
+                            },
                             Action::Disconnect => {
                                 state.push_notification("[-] Closing connection to server".to_string());
                                 (state, connection_handle) = terminate_connection(&mut state);
@@ -268,7 +283,10 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                             },
                             Action::Disconnect => {
                                 state.push_notification("[-] Not connected to a server".to_string());
-                            }
+                            },
+                            Action::Create {..} => {
+                                state.push_notification("[-] Not connected to a server".to_string());
+                            },
                             Action::Quit => {
                                 state.exit();
                             },

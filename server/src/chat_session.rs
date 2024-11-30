@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::{
     sync::mpsc::{self},
@@ -55,6 +55,14 @@ impl ChatSession {
         }
 
         format!("[-] Failed to join {room}")
+    }
+
+    pub fn get_server_rooms(&self) -> HashSet<String> {
+        self.room_manager.get_rooms()
+    }
+
+    pub fn update_manager(&mut self, room_manager: Arc<RoomManager>) {
+        self.room_manager = room_manager;
     }
 
     pub async fn recv(&mut self) -> Option<String> {

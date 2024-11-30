@@ -11,15 +11,20 @@ use tokio::{
         TcpListener, TcpStream,
     },
     signal::ctrl_c,
-    sync::broadcast::{error::TryRecvError, Receiver},
+    sync::{
+        broadcast::{self, error::TryRecvError},
+        mpsc::{self},
+    },
     task::JoinSet,
 };
 
 use chat_session::ChatSession;
 use room::{room_manager::RoomManager, Room};
+use server_updates::ServerUpdate;
 
 mod chat_session;
 mod room;
+mod server_updates;
 use common;
 
 struct RequestHandler {
@@ -52,7 +57,9 @@ async fn startup_server() -> Result<TcpListener, std::io::Error> {
 
 async fn handle_client(
     stream: TcpStream,
-    mut shutdown_rx: Receiver<Terminate>,
+    mut shutdown_rx: broadcast::Receiver<Terminate>,
+    server_updates_tx: mpsc::UnboundedSender<ServerUpdate>,
+    mut manager_updates_rx: broadcast::Receiver<Arc<RoomManager>>,
     room_manager: Arc<RoomManager>,
     server_users: Arc<Mutex<HashSet<String>>>,
 ) -> Terminate {
@@ -73,6 +80,16 @@ async fn handle_client(
         }
 
         tokio::select! {
+            new_manager = manager_updates_rx.recv() => {
+                match new_manager {
+                    Ok(new_manager) => {
+                        chat_session.update_manager(new_manager);
+                    }
+                    _ => {
+                        println!("[-] Failed to update room manager");
+                    }
+                }
+            },
             _ = req_handler.reader.readable() => {
                 match req_handler.reader.try_read_buf(&mut buf) {
                     Ok(len) if len > 0 => {
@@ -85,7 +102,7 @@ async fn handle_client(
                                             let mut response = String::new();
                                             {
                                                 let mut server_users = server_users.lock().unwrap();
-                                                if server_users.contains(name) {
+                                                if name != "anon" && server_users.contains(name) {
                                                     response = format!("[-] [{name}] as username is already in use");
                                                     response = common::pack_message("registered", Some("failed"), "server", Some(&response));
                                                 } else {
@@ -110,16 +127,16 @@ async fn handle_client(
                                         response = common::pack_message("name", None, "server", Some(&response));
                                     } else {
                                         let mut server_users = server_users.lock().unwrap();
-                                        let new_name = arg.unwrap();
-                                        if server_users.contains(new_name) {
+                                        let new_name = arg.unwrap().to_string();
+                                        if new_name != "anon" && server_users.contains(&new_name) {
                                             response = format!("[-] [{new_name}] as username is already in use");
                                             response = common::pack_message("changedname", Some("failed"), "server", Some(&response));
                                         } else {
                                             let old_name = sender;
                                             let _ = server_users.remove(old_name);
-                                            server_users.insert(new_name.to_string());
+                                            server_users.insert(new_name.clone());
                                             response = format!("[+] Username changed to [{new_name}]");
-                                            response = common::pack_message("changedname", Some(new_name), "server", Some(&response));
+                                            response = common::pack_message("changedname", Some(&new_name), "server", Some(&response));
                                         }
                                     }
                                     let _ = res_writer.writer.write_all(response.as_bytes()).await;
@@ -151,7 +168,34 @@ async fn handle_client(
                                             let response = common::pack_message("users", None, "server", Some(&response));
                                             let _ = res_writer.writer.write_all(response.as_bytes()).await;
                                         },
+                                        Some("allrooms") => {
+                                            let server_rooms = chat_session.get_server_rooms();
+                                            let response = Vec::from_iter(server_rooms.into_iter()).into_iter()
+                                                .collect::<Vec<String>>().join(",");
+                                            let response = common::pack_message("rooms", None, "server", Some(&response));
+                                            let _ = res_writer.writer.write_all(response.as_bytes()).await;
+                                        },
                                         _ => {}
+                                    }
+                                },
+                                "create" => {
+                                    match arg {
+                                        Some(new_room) => {
+                                            let mut response = String::new();
+                                            {
+                                                let server_rooms = chat_session.get_server_rooms();
+                                                if server_rooms.contains(new_room) {
+                                                    response = common::pack_message("created", Some("failed"), "server", None);
+                                                }
+                                                else {
+                                                    let _ = server_updates_tx.send(ServerUpdate::CreateRoom {room: new_room.to_string()});
+                                                    response = common::pack_message("created", Some("succes"), "server", None);
+                                                }
+                                            }
+
+                                            let _ = res_writer.writer.write_all(response.as_bytes()).await;
+                                        },
+                                        None => {},
                                     }
                                 },
                                 "sendto" => {
@@ -219,12 +263,18 @@ async fn main() {
         }
     };
     let mut connections_set: JoinSet<Terminate> = JoinSet::new();
-    let (shutdown_tx, shutdown_rx) = tokio::sync::broadcast::channel::<Terminate>(10);
+    let (shutdown_tx, shutdown_rx) = broadcast::channel::<Terminate>(10);
 
     // Default server rooms
     let main_room = Room::new("main");
-    let server_rooms: Vec<Arc<Mutex<Room>>> = vec![Arc::new(Mutex::new(main_room))];
-    let room_manager = Arc::new(RoomManager::new(server_rooms));
+    let mut server_rooms: Vec<Arc<Mutex<Room>>> = vec![Arc::new(Mutex::new(main_room))];
+    let mut room_manager = Arc::new(RoomManager::new(server_rooms.clone()));
+
+    // Channel for performing server wide actions
+    let (server_updates_tx, mut server_updates_rx) = mpsc::unbounded_channel::<ServerUpdate>();
+
+    // Broadcast channel for handling updates of RoomManager
+    let (manager_updates_tx, manager_updates_rx) = broadcast::channel::<Arc<RoomManager>>(10);
 
     // Users
     let server_users: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
@@ -241,8 +291,28 @@ async fn main() {
                 break;
             },
             Ok((stream, _)) = listener.accept() => {
-                connections_set.spawn(handle_client(stream, shutdown_rx.resubscribe(), Arc::clone(&room_manager), Arc::clone(&server_users)));
-            }
+                connections_set.spawn(handle_client(
+                    stream,
+                    shutdown_rx.resubscribe(),
+                    server_updates_tx.clone(),
+                    manager_updates_rx.resubscribe(),
+                    Arc::clone(&room_manager),
+                    Arc::clone(&server_users))
+                );
+            },
+            server_update = server_updates_rx.recv() => {
+                match server_update {
+                    Some(ServerUpdate::CreateRoom { room }) => {
+                        let new_room = Room::new(&room);
+                        server_rooms.push(Arc::new(Mutex::new(new_room)));
+                        let new_manager = Arc::new(RoomManager::new(server_rooms.clone()));
+                        room_manager = new_manager;
+                        let _ = manager_updates_tx.send(Arc::clone(&room_manager));
+                    },
+                    _ => {},
+                }
+
+            },
         }
     }
     connections_set.join_all().await;
