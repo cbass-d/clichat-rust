@@ -36,6 +36,7 @@ impl Default for State {
         );
         startup_notices.push("    To list users: /list users".to_string());
         startup_notices.push("[*] To list joined rooms: /list rooms".to_string());
+        startup_notices.push("[*] To list all rooms on server: /list allrooms".to_string());
 
         State {
             connection_status: ConnectionStatus::Unitiliazed,
