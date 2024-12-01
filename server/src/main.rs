@@ -20,11 +20,11 @@ use tokio::{
 
 use chat_session::ChatSession;
 use room::{room_manager::RoomManager, Room};
-use server_updates::ServerUpdate;
+use server_action::ServerAction;
 
 mod chat_session;
 mod room;
-mod server_updates;
+mod server_action;
 use common;
 
 struct RequestHandler {
@@ -36,7 +36,7 @@ struct ResponseWriter {
 }
 
 type ClientConnection = (RequestHandler, ResponseWriter);
-const SERVER_ADDR: &str = "127.0.0.1";
+const SERVER_PORT: &str = "6667";
 
 #[derive(Clone)]
 enum Terminate {
@@ -51,7 +51,8 @@ fn split_stream(stream: TcpStream) -> ClientConnection {
 }
 
 async fn startup_server() -> Result<TcpListener, std::io::Error> {
-    let listener = TcpListener::bind("127.0.0.1:6667").await?;
+    let addr = format!("0.0.0.0:{SERVER_PORT}");
+    let listener = TcpListener::bind(addr).await?;
     return Ok(listener);
 }
 
@@ -59,7 +60,7 @@ async fn handle_client(
     stream: TcpStream,
     id: u64,
     mut shutdown_rx: broadcast::Receiver<Terminate>,
-    server_updates_tx: mpsc::UnboundedSender<ServerUpdate>,
+    server_action_tx: mpsc::UnboundedSender<ServerAction>,
     mut manager_updates_rx: broadcast::Receiver<Arc<RoomManager>>,
     room_manager: Arc<RoomManager>,
     server_users: Arc<Mutex<HashMap<String, u64>>>,
@@ -68,6 +69,13 @@ async fn handle_client(
     let (req_handler, mut res_writer) = client_connection;
     let mut buf: Vec<u8> = Vec::with_capacity(4096);
     let mut chat_session = ChatSession::new(id, room_manager);
+
+    // Create channel for private messages
+    let (private_tx, mut private_rx) = mpsc::unbounded_channel::<String>();
+    server_action_tx.send(ServerAction::AddSession {
+        id,
+        session_channel: private_tx,
+    });
 
     loop {
         match shutdown_rx.try_recv() {
@@ -194,7 +202,7 @@ async fn handle_client(
                                                     response = common::pack_message("created", Some("failed"), "server", 0, None);
                                                 }
                                                 else {
-                                                    let _ = server_updates_tx.send(ServerUpdate::CreateRoom {room: new_room.to_string()});
+                                                    let _ = server_action_tx.send(ServerAction::CreateRoom {room: new_room.to_string()});
                                                     response = common::pack_message("created", Some("succes"), "server", 0, None);
                                                 }
                                             }
@@ -227,6 +235,18 @@ async fn handle_client(
                                         },
                                     }
                                 },
+                                "privmsg" => {
+                                    match arg {
+                                        Some(user) => {
+                                            let server_users = server_users.lock().unwrap();
+                                            let user_id = *server_users.get(user).unwrap();
+                                            let message = message.unwrap();
+                                            let message = common::pack_message("message", None, sender, id.parse().unwrap(), Some(message));
+                                            let _ = server_action_tx.send(ServerAction::PrivMsg {user_id, message});
+                                        },
+                                        None => {},
+                                    }
+                                }
                                 _ => {
                                     println!("[-] Invalid command received");
                                 },
@@ -244,6 +264,11 @@ async fn handle_client(
                         println!("[-] Failed to read from stream: {err}");
                         break Terminate::SocketError;
                     },
+                }
+            }
+            priv_message = private_rx.recv() => {
+                if let Some(message) = priv_message {
+                    let _ = res_writer.writer.write_all(message.as_bytes()).await;
                 }
             }
             message = chat_session.recv() => {
@@ -279,13 +304,16 @@ async fn main() {
     let mut room_manager = Arc::new(RoomManager::new(server_rooms.clone()));
 
     // Channel for performing server wide actions
-    let (server_updates_tx, mut server_updates_rx) = mpsc::unbounded_channel::<ServerUpdate>();
+    let (server_action_tx, mut server_action_rx) = mpsc::unbounded_channel::<ServerAction>();
 
     // Broadcast channel for handling updates of RoomManager
     let (manager_updates_tx, manager_updates_rx) = broadcast::channel::<Arc<RoomManager>>(10);
 
     // Users
     let server_users: Arc<Mutex<HashMap<String, u64>>> = Arc::new(Mutex::new(HashMap::new()));
+
+    // ChatSessios
+    let mut sessions: HashMap<u64, mpsc::UnboundedSender<String>> = HashMap::new();
 
     // Incremental user id
     // Id '0' will be reserved for respsones orginating from server
@@ -308,21 +336,28 @@ async fn main() {
                     stream,
                     id.into(),
                     shutdown_rx.resubscribe(),
-                    server_updates_tx.clone(),
+                    server_action_tx.clone(),
                     manager_updates_rx.resubscribe(),
                     Arc::clone(&room_manager),
                     Arc::clone(&server_users))
                 );
                 user_id = (*user_id.get_mut() + 1).into();
             },
-            server_update = server_updates_rx.recv() => {
-                match server_update {
-                    Some(ServerUpdate::CreateRoom { room }) => {
+            server_action = server_action_rx.recv() => {
+                match server_action{
+                    Some(ServerAction::AddSession { id, session_channel }) => {
+                        sessions.insert(id, session_channel);
+                    },
+                    Some(ServerAction::CreateRoom { room }) => {
                         let new_room = Room::new(&room);
                         server_rooms.push(Arc::new(Mutex::new(new_room)));
                         let new_manager = Arc::new(RoomManager::new(server_rooms.clone()));
                         room_manager = new_manager;
                         let _ = manager_updates_tx.send(Arc::clone(&room_manager));
+                    },
+                    Some(ServerAction::PrivMsg { user_id, message }) => {
+                        let session = sessions.get(&user_id).unwrap().clone();
+                        let _ = session.send(message);
                     },
                     _ => {},
                 }

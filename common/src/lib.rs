@@ -43,7 +43,7 @@ pub fn unpack_message(message: &str) -> Option<(&str, Option<&str>, &str, &str, 
             let id = tokens[3];
             Some((cmd, Some(arg), sender, id, None))
         }
-        "registered" | "joined" => {
+        "registered" | "joined" | "privmsg" => {
             let arg = tokens[1];
             let sender = tokens[2];
             let id = tokens[3];
@@ -51,7 +51,7 @@ pub fn unpack_message(message: &str) -> Option<(&str, Option<&str>, &str, &str, 
 
             Some((cmd, Some(arg), sender, id, Some(message)))
         }
-        "rooms" | "users" => {
+        "rooms" | "users" | "message" => {
             let sender = tokens[1];
             let id = tokens[2];
             let message;

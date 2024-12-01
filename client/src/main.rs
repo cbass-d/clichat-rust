@@ -92,6 +92,10 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                                             let message = message.unwrap();
                                             state.push_notification(format!("[#{room}] {sender} #{id}: {message}"));
                                         },
+                                        "message" => {
+                                            let message = message.unwrap();
+                                            state.push_notification(format!("[privmsg] {sender} #{id}: {message}"));
+                                        }
                                         "joined" => {
                                             let message = message.unwrap();
                                             state.push_notification(message.to_string());
@@ -212,9 +216,18 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                                 state.push_notification("[*] Attemping name change".to_string());
                                 let _ = req_handler.writer.write_all(message.as_bytes()).await;
                             },
-                            Action::SendTo { arg, message } => {
-                                let message = common::pack_message("sendto", Some(&arg), &state.get_name(), state.get_session_id(), Some(&message));
+                            Action::SendTo { room, message } => {
+                                let message = common::pack_message("sendto", Some(&room), &state.get_name(), state.get_session_id(), Some(&message));
                                 let _ = req_handler.writer.write_all(message.as_bytes()).await;
+                            },
+                            Action::PrivMsg{ user, message } => {
+                                if user == state.get_name() {
+                                    state.push_notification("[-] Cannot send message to yourself".to_string());
+                                }
+                                else {
+                                    let message = common::pack_message("privmsg", Some(&user), &state.get_name(), state.get_session_id(), Some(&message));
+                                    let _ = req_handler.writer.write_all(message.as_bytes()).await;
+                                }
                             },
                             Action::Join { room } => {
                                 let message = common::pack_message("join", Some(&room), &state.get_name(), state.get_session_id(), None);
@@ -255,13 +268,7 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                                 state.set_name(name.clone());
                                 state.push_notification(format!("[+] Name set to [{name}]"));
                             }
-                            Action::SendTo {..} => {
-                                state.push_notification("[-] Not connected to a server".to_string());
-                            }
-                            Action::Join {..} => {
-                                state.push_notification("[-] Not connected to a server".to_string());
-                            }
-                            Action::List {..} => {
+                            Action::SendTo {..} | Action::PrivMsg {..} | Action::Join {..} | Action::List {..} | Action::Create {..} | Action::Disconnect => {
                                 state.push_notification("[-] Not connected to a server".to_string());
                             }
                             Action::Connect { addr } => {
@@ -295,12 +302,6 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                                         state.push_notification("[-] Failed to connect: ".to_string() + &err);
                                     },
                                 }
-                            },
-                            Action::Disconnect => {
-                                state.push_notification("[-] Not connected to a server".to_string());
-                            },
-                            Action::Create {..} => {
-                                state.push_notification("[-] Not connected to a server".to_string());
                             },
                             Action::Quit => {
                                 state.exit();

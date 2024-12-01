@@ -36,6 +36,9 @@ impl Default for State {
         startup_notices.push("[*] To list joined rooms: /list rooms".to_string());
         startup_notices.push("[*] To list all rooms on server: /list allrooms".to_string());
         startup_notices.push("[*] To create a new room: /create ".to_string());
+        startup_notices
+            .push("[*] Private messages can be sent to users using \"/privmsg\"".to_string());
+        startup_notices.push("    Example: /privmsg jon message".to_string());
 
         State {
             connection_status: ConnectionStatus::Unitiliazed,

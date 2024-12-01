@@ -79,6 +79,10 @@ impl ChatSession {
         self.room_manager = room_manager;
     }
 
+    pub async fn send(&mut self, message: String) {
+        let _ = self.mpsc_tx.send(message).await;
+    }
+
     pub async fn recv(&mut self) -> Option<String> {
         self.mpsc_rx.recv().await
     }

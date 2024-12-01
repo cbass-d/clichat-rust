@@ -2,7 +2,8 @@ pub enum Action {
     Connect { addr: String },
     SetName { name: String },
     Disconnect,
-    SendTo { arg: String, message: String },
+    SendTo { room: String, message: String },
+    PrivMsg { user: String, message: String },
     Join { room: String },
     List { opt: String },
     Create { room: String },
@@ -37,8 +38,8 @@ pub fn parse_command(string: String) -> Option<Action> {
                     return Some(Action::Connect { addr });
                 }
                 "sendto" => {
-                    let arg = match tokens.next() {
-                        Some(arg) => arg.to_string(),
+                    let room = match tokens.next() {
+                        Some(room) => room.to_string(),
                         None => {
                             return None;
                         }
@@ -53,7 +54,26 @@ pub fn parse_command(string: String) -> Option<Action> {
                     if message == "" {
                         return None;
                     }
-                    return Some(Action::SendTo { arg, message });
+                    return Some(Action::SendTo { room, message });
+                }
+                "privmsg" => {
+                    let user = match tokens.next() {
+                        Some(user) => user.to_string(),
+                        None => {
+                            return None;
+                        }
+                    };
+                    let mut message = String::new();
+                    while let Some(part) = tokens.next() {
+                        message += part;
+                        message += " ";
+                    }
+                    message = message.trim().to_string();
+
+                    if message == "" {
+                        return None;
+                    }
+                    return Some(Action::PrivMsg { user, message });
                 }
                 "list" => {
                     let opt = match tokens.next() {
