@@ -55,7 +55,7 @@ pub fn unpack_message(message: &str) -> Option<(&str, Option<&str>, &str, &str, 
             let sender = tokens[1];
             let id = tokens[2];
             let message;
-            if tokens.len() < 3 {
+            if tokens.len() < 4 {
                 message = None;
             } else {
                 message = Some(tokens[3]);

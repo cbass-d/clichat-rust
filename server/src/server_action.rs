@@ -5,6 +5,10 @@ pub enum ServerAction {
         id: u64,
         session_channel: mpsc::UnboundedSender<String>,
     },
+    DropSession {
+        name: String,
+        id: u64,
+    },
     CreateRoom {
         room: String,
     },
