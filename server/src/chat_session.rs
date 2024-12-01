@@ -10,6 +10,7 @@ use super::room::UserHandle;
 
 pub struct ChatSession {
     name: String,
+    id: u64,
     pub rooms: HashMap<String, UserHandle>,
     room_manager: Arc<RoomManager>,
     room_task_set: JoinSet<()>,
@@ -18,17 +19,30 @@ pub struct ChatSession {
 }
 
 impl ChatSession {
-    pub fn new(name: &str, room_manager: Arc<RoomManager>) -> Self {
+    pub fn new(id: u64, room_manager: Arc<RoomManager>) -> Self {
         let (mpsc_tx, mpsc_rx) = mpsc::channel(10);
 
         Self {
             rooms: HashMap::new(),
+            name: String::new(),
+            id,
             room_manager,
-            name: name.to_owned(),
             room_task_set: JoinSet::new(),
             mpsc_tx,
             mpsc_rx,
         }
+    }
+
+    pub fn set_name(&mut self, name: String) {
+        self.name = name;
+    }
+
+    pub fn get_name(&self) -> String {
+        self.name.clone()
+    }
+
+    pub fn get_id(&self) -> u64 {
+        self.id
     }
 
     pub async fn join_room(&mut self, room: String) -> String {

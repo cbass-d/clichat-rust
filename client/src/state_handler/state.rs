@@ -11,6 +11,7 @@ pub struct State {
     registered: bool,
     current_server: String,
     name: String,
+    session_id: u64,
     pub notifications: Vec<String>,
     pub exit: bool,
 }
@@ -22,7 +23,6 @@ impl Default for State {
         startup_notices
             .push("[*] No nickname set. To set one use the \"/name\" command".to_string());
         startup_notices.push("    Example: /name jon".to_string());
-
         startup_notices
             .push("[*] Not connected to server. To connect use \"/connect\" command".to_string());
         startup_notices.push("    Example: /connect 127.0.0.1:6667".to_string());
@@ -31,18 +31,18 @@ impl Default for State {
         startup_notices
             .push("    To send message to server room: /sendto {room} {msg}".to_string());
         startup_notices.push("    To change name on server use the \"/name\" command".to_string());
-        startup_notices.push(
-            "    Username must be unique on server (besides the default of \"anon\")".to_string(),
-        );
+        startup_notices.push("    Username must be unique on server".to_string());
         startup_notices.push("    To list users: /list users".to_string());
         startup_notices.push("[*] To list joined rooms: /list rooms".to_string());
         startup_notices.push("[*] To list all rooms on server: /list allrooms".to_string());
+        startup_notices.push("[*] To create a new room: /create ".to_string());
 
         State {
             connection_status: ConnectionStatus::Unitiliazed,
             registered: false,
             current_server: String::new(),
-            name: String::from("anon"), // Default name
+            name: String::new(),
+            session_id: std::u64::MAX,
             notifications: startup_notices,
             exit: false,
         }
@@ -56,6 +56,14 @@ impl State {
 
     pub fn get_name(&self) -> String {
         self.name.clone()
+    }
+
+    pub fn get_session_id(&self) -> u64 {
+        self.session_id
+    }
+
+    pub fn set_session_id(&mut self, id: u64) {
+        self.session_id = id;
     }
 
     pub fn set_server(&mut self, server: String) {

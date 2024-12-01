@@ -1,4 +1,10 @@
-pub fn pack_message(cmd: &str, arg: Option<&str>, sender: &str, message: Option<&str>) -> String {
+pub fn pack_message(
+    cmd: &str,
+    arg: Option<&str>,
+    sender: &str,
+    id: u64,
+    message: Option<&str>,
+) -> String {
     let mut packed = String::from("!#");
     packed.push_str(cmd);
 
@@ -9,6 +15,8 @@ pub fn pack_message(cmd: &str, arg: Option<&str>, sender: &str, message: Option<
 
     packed.push('#');
     packed.push_str(sender);
+    packed.push('#');
+    packed.push_str(&id.to_string());
     if let Some(message) = message {
         packed.push('#');
         packed.push_str(message);
@@ -18,7 +26,7 @@ pub fn pack_message(cmd: &str, arg: Option<&str>, sender: &str, message: Option<
     packed
 }
 
-pub fn unpack_message(message: &str) -> Option<(&str, Option<&str>, &str, Option<&str>)> {
+pub fn unpack_message(message: &str) -> Option<(&str, Option<&str>, &str, &str, Option<&str>)> {
     if !message.starts_with("!") || !message.ends_with("!") {
         return None;
     }
@@ -32,32 +40,36 @@ pub fn unpack_message(message: &str) -> Option<(&str, Option<&str>, &str, Option
         "register" | "join" | "list" | "name" | "create" | "created" => {
             let arg = tokens[1];
             let sender = tokens[2];
-            Some((cmd, Some(arg), sender, None))
+            let id = tokens[3];
+            Some((cmd, Some(arg), sender, id, None))
         }
         "registered" | "joined" => {
             let arg = tokens[1];
             let sender = tokens[2];
-            let message = tokens[3];
+            let id = tokens[3];
+            let message = tokens[4];
 
-            Some((cmd, Some(arg), sender, Some(message)))
+            Some((cmd, Some(arg), sender, id, Some(message)))
         }
         "rooms" | "users" => {
             let sender = tokens[1];
+            let id = tokens[2];
             let message;
             if tokens.len() < 3 {
                 message = None;
             } else {
-                message = Some(tokens[2]);
+                message = Some(tokens[3]);
             }
 
-            Some((cmd, None, sender, message))
+            Some((cmd, None, sender, id, message))
         }
         "changedname" | "sendto" | "roommessage" => {
             let arg = tokens[1];
             let sender = tokens[2];
-            let message = tokens[3];
+            let id = tokens[3];
+            let message = tokens[4];
 
-            Some((cmd, Some(arg), sender, Some(message)))
+            Some((cmd, Some(arg), sender, id, Some(message)))
         }
         _ => None,
     }
