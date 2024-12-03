@@ -33,6 +33,7 @@ impl Default for State {
         startup_notices.push("    Username must be unique on server".to_string());
         startup_notices.push("    To list users: /list users".to_string());
         startup_notices.push("[*] To list joined rooms: /list rooms".to_string());
+        startup_notices.push("[*] To leave a joinded room: /leave room".to_string());
         startup_notices.push("[*] To list all rooms on server: /list allrooms".to_string());
         startup_notices.push("[*] To create a new room: /create ".to_string());
         startup_notices
