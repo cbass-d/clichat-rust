@@ -5,6 +5,7 @@ pub enum Action {
     SendTo { room: String, message: String },
     PrivMsg { user: String, message: String },
     Join { room: String },
+    Leave { room: String },
     List { opt: String },
     Create { room: String },
     Quit,
@@ -94,6 +95,16 @@ pub fn parse_command(string: String) -> Option<Action> {
                     };
 
                     return Some(Action::Join { room });
+                }
+                "leave" => {
+                    let room = match tokens.next() {
+                        Some(room) => room.to_string(),
+                        None => {
+                            return None;
+                        }
+                    };
+
+                    return Some(Action::Leave { room });
                 }
                 "create" => {
                     let room = match tokens.next() {

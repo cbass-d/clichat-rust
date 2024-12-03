@@ -10,14 +10,12 @@ use tokio::sync::mpsc::UnboundedSender;
 use super::component::{Component, ComponentRender, RenderProps};
 use crate::state_handler::{
     action::{parse_command, Action},
-    state::{ConnectionStatus, State},
+    state::State,
 };
 
 pub struct InputBox {
     char_index: usize,
     input: String,
-    connection_status: ConnectionStatus,
-    name: String,
     prompt: String,
     action_tx: UnboundedSender<Action>,
 }
@@ -91,8 +89,6 @@ impl Component for InputBox {
         Self {
             char_index: 0,
             input: String::new(),
-            connection_status: state.get_connection_status(),
-            name: state.get_name(),
             prompt: state.get_name(),
             action_tx,
         }
@@ -103,8 +99,6 @@ impl Component for InputBox {
         Self: Sized,
     {
         Self {
-            connection_status: state.get_connection_status(),
-            name: state.get_name(),
             prompt: state.get_name(),
             ..self
         }

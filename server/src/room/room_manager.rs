@@ -43,17 +43,4 @@ impl RoomManager {
     pub fn get_rooms(&self) -> HashSet<String> {
         HashSet::from_iter(self.rooms.clone().into_keys().into_iter())
     }
-
-    pub async fn drop_user_handle(&self, handle: UserHandle) -> Result<()> {
-        let room = self.rooms.get(handle.room());
-
-        match room {
-            Some(room) => {
-                let mut room = room.lock().unwrap();
-                room.leave(handle);
-                Ok(())
-            }
-            None => Err(std::io::Error::into(std::io::ErrorKind::Other.into())),
-        }
-    }
 }

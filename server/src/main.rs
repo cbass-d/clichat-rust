@@ -12,7 +12,7 @@ use tokio::{
     },
     signal::ctrl_c,
     sync::{
-        broadcast::{self, error::TryRecvError},
+        broadcast::{self},
         mpsc::{self},
     },
     task::JoinSet,
@@ -65,7 +65,7 @@ async fn handle_client(
     mut users_updates_rx: broadcast::Receiver<Arc<Mutex<HashMap<String, u64>>>>,
     room_manager: Arc<RoomManager>,
     mut server_users: Arc<Mutex<HashMap<String, u64>>>,
-) {
+) -> Terminate {
     let client_connection = split_stream(stream);
     let (req_handler, mut res_writer) = client_connection;
     let mut buf: Vec<u8> = Vec::with_capacity(4096);
@@ -122,19 +122,12 @@ async fn handle_client(
                                             }
                                             let _ = res_writer.writer.write_all(response.as_bytes()).await;
                                         },
-                                        None => {
-                                            let message = "[-] Invalid or no argument received";
-                                            let message = common::pack_message("registered", Some("failed"), "server", 0, Some(&message));
-                                            let _ = res_writer.writer.write_all(message.as_bytes()).await;
-                                        },
+                                        None => {},
                                     }
-                                }
+                                },
                                 "name" => {
                                     let mut response: String;
-                                    if arg == None {
-                                        response = "[-] Invalid request recieved".to_string();
-                                        response = common::pack_message("name", None, "server", 0, Some(&response));
-                                    } else {
+                                    {
                                         let mut server_users = server_users.lock().unwrap();
                                         let new_name = arg.unwrap();
                                         if new_name != "anon" && server_users.contains_key(new_name) {
@@ -151,24 +144,34 @@ async fn handle_client(
                                         }
                                     }
                                     let _ = res_writer.writer.write_all(response.as_bytes()).await;
-                                }
+                                },
                                 "join" => {
                                     match arg {
                                         Some(arg) => {
-                                            let result = chat_session.join_room(arg.to_string()).await;
-                                            let message = common::pack_message("joined", Some(arg), "server", 0, Some(&result));
-                                            let _ = res_writer.writer.write_all(message.as_bytes()).await;
+                                            let response = chat_session.join_room(arg.to_string()).await;
+                                            let response = common::pack_message("joined", Some(arg), "server", 0, Some(&response));
+                                            let _ = res_writer.writer.write_all(response.as_bytes()).await;
                                         },
                                         None => {}
                                     }
                                 },
+                                "leave" => {
+                                    match arg {
+                                        Some(arg) => {
+                                            let response = chat_session.leave_room(arg.to_string());
+                                            let response = common::pack_message("left", Some(arg), "server", 0, Some(&response));
+                                            let _ = res_writer.writer.write_all(response.as_bytes()).await;
+                                        },
+                                        None => {},
+                                    }
+                                }
                                 "list" => {
                                     match arg {
                                         Some("rooms") => {
                                             let rooms: Vec<String> = chat_session.rooms.clone().into_keys().collect();
                                             let content = rooms.join(",");
-                                            let message = common::pack_message("rooms", None, "server", 0, Some(&content));
-                                            let _ = res_writer.writer.write_all(message.as_bytes()).await;
+                                            let response = common::pack_message("rooms", None, "server", 0, Some(&content));
+                                            let _ = res_writer.writer.write_all(response.as_bytes()).await;
                                         },
                                         Some("users") => {
                                             let mut response = String::new();
@@ -217,7 +220,7 @@ async fn handle_client(
                                 "sendto" => {
                                     match arg {
                                         Some(room) => {
-                                            if let Some(user_handle) = chat_session.rooms.get(room) {
+                                            if let Some((user_handle, _)) = chat_session.rooms.get(room) {
                                                 match message {
                                                     Some(message) => {
                                                         let server_users = server_users.lock().unwrap();
@@ -225,16 +228,12 @@ async fn handle_client(
                                                         let message = common::pack_message("roommessage", Some(room), sender, id, Some(message));
                                                         user_handle.send_message(message.to_string());
                                                     },
-                                                    None => {
-                                                        println!("[-] No message provided");
-                                                    }
+                                                    None => {},
                                                 }
                                             }
                                             else {println!("[-] Room not found: {room}");}
                                         },
-                                        None => {
-                                            println!("[-] Invalid argument provided");
-                                        },
+                                        None => {},
                                     }
                                 },
                                 "privmsg" => {
@@ -248,10 +247,8 @@ async fn handle_client(
                                         },
                                         None => {},
                                     }
-                                }
-                                _ => {
-                                    println!("[-] Invalid command received");
                                 },
+                                _ => {},
                             }
                         }
                         else { println!("[-] Invalid raw message received"); }
@@ -290,6 +287,8 @@ async fn handle_client(
         name: chat_session.get_name(),
         id: chat_session.get_id(),
     });
+
+    Terminate::ClientClosed
 }
 
 #[tokio::main]
@@ -302,26 +301,22 @@ async fn main() {
             panic!();
         }
     };
-    let mut connections_set: JoinSet<()> = JoinSet::new();
+    let mut connections_set: JoinSet<Terminate> = JoinSet::new();
     let (shutdown_tx, shutdown_rx) = broadcast::channel::<Terminate>(10);
 
-    // Default server rooms
     let main_room = Room::new("main");
     let mut server_rooms: Vec<Arc<Mutex<Room>>> = vec![Arc::new(Mutex::new(main_room))];
     let mut room_manager = Arc::new(RoomManager::new(server_rooms.clone()));
+    let mut server_users: Arc<Mutex<HashMap<String, u64>>> = Arc::new(Mutex::new(HashMap::new()));
 
     // Channel for performing server wide actions
     let (server_action_tx, mut server_action_rx) = mpsc::unbounded_channel::<ServerAction>();
-
-    // Users
-    let mut server_users: Arc<Mutex<HashMap<String, u64>>> = Arc::new(Mutex::new(HashMap::new()));
 
     // Broadcast channel for handling updates of RoomManager and server users
     let (manager_updates_tx, manager_updates_rx) = broadcast::channel::<Arc<RoomManager>>(10);
     let (users_updates_tx, users_updates_rx) =
         broadcast::channel::<Arc<Mutex<HashMap<String, u64>>>>(10);
 
-    // ChatSessios
     let mut sessions: HashMap<u64, mpsc::UnboundedSender<String>> = HashMap::new();
 
     // Incremental user id
@@ -362,15 +357,19 @@ async fn main() {
                         let mut new_server_users = server_users.lock().unwrap().clone();
                         new_server_users.remove(&name);
                         let new_server_users = Arc::new(Mutex::new(new_server_users));
-                        let _ = users_updates_tx.send(Arc::clone(&new_server_users));
                         server_users = new_server_users;
                         sessions.remove(&id);
+
+                        // Send updated users to client threads
+                        let _ = users_updates_tx.send(Arc::clone(&server_users));
                     }
                     Some(ServerAction::CreateRoom { room }) => {
                         let new_room = Room::new(&room);
                         server_rooms.push(Arc::new(Mutex::new(new_room)));
                         let new_manager = Arc::new(RoomManager::new(server_rooms.clone()));
                         room_manager = new_manager;
+
+                        // Send updated room manager to client threads
                         let _ = manager_updates_tx.send(Arc::clone(&room_manager));
                     },
                     Some(ServerAction::PrivMsg { user_id, message }) => {

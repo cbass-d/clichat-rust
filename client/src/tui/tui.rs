@@ -8,10 +8,7 @@ use crossterm::{
 use futures::{FutureExt, StreamExt};
 use ratatui::prelude::*;
 use std::io::{self, Stdout};
-use tokio::{
-    sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
-    task::JoinHandle,
-};
+use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 pub struct Tui {
     pub action_tx: UnboundedSender<Action>,
@@ -27,7 +24,6 @@ pub enum Event {
 pub struct EventHandler {
     _tx: UnboundedSender<Event>,
     rx: UnboundedReceiver<Event>,
-    task: Option<JoinHandle<()>>,
 }
 
 impl EventHandler {
@@ -37,7 +33,7 @@ impl EventHandler {
         let (tx, rx) = mpsc::unbounded_channel();
         let _tx = tx.clone();
 
-        let task = tokio::spawn(async move {
+        let _task = tokio::spawn(async move {
             let mut reader = crossterm::event::EventStream::new();
             let mut interval = tokio::time::interval(tick_rate);
             loop {
@@ -69,11 +65,7 @@ impl EventHandler {
             }
         });
 
-        Self {
-            _tx,
-            rx,
-            task: Some(task),
-        }
+        Self { _tx, rx }
     }
 
     pub async fn next(&mut self) -> Result<Event> {

@@ -1,7 +1,6 @@
 #[derive(Clone, PartialEq)]
 pub enum ConnectionStatus {
     Established,
-    Connecting,
     Unitiliazed,
 }
 
@@ -83,14 +82,6 @@ impl State {
 
     pub fn set_connection_status(&mut self, status: ConnectionStatus) {
         self.connection_status = status;
-    }
-
-    pub fn get_connection_status(&self) -> ConnectionStatus {
-        self.connection_status.clone()
-    }
-
-    pub fn registered(&self) -> bool {
-        self.registered
     }
 
     pub fn set_as_registered(&mut self) {

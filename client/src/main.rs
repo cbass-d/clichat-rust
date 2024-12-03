@@ -100,6 +100,10 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                                             let message = message.unwrap();
                                             state.push_notification(message.to_string());
                                         },
+                                        "left" => {
+                                            let message = message.unwrap();
+                                            state.push_notification(message.to_string());
+                                        },
                                         "rooms" => {
                                             if let Some(message) = message {
                                                 let mut rooms: Vec<&str> = Vec::new();
@@ -233,6 +237,10 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                                 let message = common::pack_message("join", Some(&room), &state.get_name(), state.get_session_id(), None);
                                 let _ = req_handler.writer.write_all(message.as_bytes()).await;
                             },
+                            Action::Leave { room } => {
+                                let message = common::pack_message("leave", Some(&room), &state.get_name(), state.get_session_id(), None);
+                                let _ = req_handler.writer.write_all(message.as_bytes()).await;
+                            }
                             Action::List { opt } => {
                                 let message = common::pack_message("list", Some(&opt), &state.get_name(), state.get_session_id(), None);
                                 let _ = req_handler.writer.write_all(message.as_bytes()).await;
@@ -267,10 +275,7 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                             Action::SetName { name } => {
                                 state.set_name(name.clone());
                                 state.push_notification(format!("[+] Name set to [{name}]"));
-                            }
-                            Action::SendTo {..} | Action::PrivMsg {..} | Action::Join {..} | Action::List {..} | Action::Create {..} | Action::Disconnect => {
-                                state.push_notification("[-] Not connected to a server".to_string());
-                            }
+                            },
                             Action::Connect { addr } => {
                                 if state.get_name().is_empty() {
                                     state.push_notification("[-] Must set name".to_string());
@@ -309,6 +314,9 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                             Action::Invalid => {
                                 state.push_notification("[-] Invalid command".to_string());
                             },
+                            _ => {
+                                state.push_notification("[-] Not connected to a serve".to_string());
+                            }
                         }
                         update = true;
                     },

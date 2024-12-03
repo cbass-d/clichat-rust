@@ -2,16 +2,15 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::{
     sync::mpsc::{self},
-    task::JoinSet,
+    task::{AbortHandle, JoinSet},
 };
 
-use super::room::room_manager::RoomManager;
-use super::room::UserHandle;
+use super::{room::UserHandle, RoomManager};
 
 pub struct ChatSession {
     name: String,
     id: u64,
-    pub rooms: HashMap<String, UserHandle>,
+    pub rooms: HashMap<String, (UserHandle, AbortHandle)>,
     room_manager: Arc<RoomManager>,
     room_task_set: JoinSet<()>,
     mpsc_tx: mpsc::Sender<String>,
@@ -63,12 +62,25 @@ impl ChatSession {
                 }
             });
 
-            self.rooms.insert(room.clone(), user_handle);
+            self.rooms.insert(room.clone(), (user_handle, room_task));
 
             return format!("[+] Joined {room}");
         }
 
         format!("[-] Failed to join {room}")
+    }
+
+    pub fn leave_room(&mut self, room: String) -> String {
+        if !self.rooms.contains_key(&room) {
+            return format!("[-] Not part of {room}");
+        }
+
+        let (_, room_task) = self.rooms.get(&room).unwrap();
+        room_task.abort();
+
+        let _ = self.rooms.remove(&room);
+
+        return format!("[+] Left {room}");
     }
 
     pub fn get_server_rooms(&self) -> HashSet<String> {
@@ -77,10 +89,6 @@ impl ChatSession {
 
     pub fn update_manager(&mut self, room_manager: Arc<RoomManager>) {
         self.room_manager = room_manager;
-    }
-
-    pub async fn send(&mut self, message: String) {
-        let _ = self.mpsc_tx.send(message).await;
     }
 
     pub async fn recv(&mut self) -> Option<String> {

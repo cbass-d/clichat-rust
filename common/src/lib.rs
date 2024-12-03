@@ -37,13 +37,14 @@ pub fn unpack_message(message: &str) -> Option<(&str, Option<&str>, &str, &str, 
     let cmd = tokens[0];
 
     match cmd {
-        "register" | "join" | "list" | "name" | "create" | "created" => {
+        "register" | "join" | "leave" | "list" | "name" | "create" | "created" => {
             let arg = tokens[1];
             let sender = tokens[2];
             let id = tokens[3];
+
             Some((cmd, Some(arg), sender, id, None))
         }
-        "registered" | "joined" | "privmsg" => {
+        "registered" | "joined" | "left" | "privmsg" => {
             let arg = tokens[1];
             let sender = tokens[2];
             let id = tokens[3];
