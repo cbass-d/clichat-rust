@@ -8,7 +8,7 @@ use tokio::{
     sync::broadcast::{Receiver, Sender},
 };
 
-use common;
+use common::{self, Message};
 use state_handler::{
     action::Action,
     state::{ConnectionStatus, State},
@@ -85,32 +85,32 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                         match res_stream.reader.try_read_buf(&mut buf) {
                             Ok(len) if len > 0 => {
                                 let raw_message = String::from_utf8(buf[0..len].to_vec()).unwrap();
-                                if let Some((cmd, arg, sender, id, message)) = common::unpack_message(&raw_message) {
-                                    match cmd {
+                                if let Some(message) = common::unpack_message(&raw_message) {
+                                    match message.cmd.as_str() {
                                         "roommessage" => {
-                                            let room = arg.unwrap();
-                                            let message = message.unwrap();
-                                            state.push_notification(format!("[#{room}] {sender} #{id}: {message}"));
+                                            let room = message.arg.unwrap();
+                                            let content = message.content.unwrap();
+                                            state.push_notification(format!("[#{room}] {0} #{1}: {content}", message.sender, message.id));
                                         },
                                         "message" => {
-                                            let message = message.unwrap();
-                                            state.push_notification(format!("[privmsg] {sender} #{id}: {message}"));
+                                            let content = message.content.unwrap();
+                                            state.push_notification(format!("[privmsg] {0} #{1}: {content}", message.sender, message.id));
                                         }
                                         "joined" => {
-                                            let message = message.unwrap();
-                                            state.push_notification(message.to_string());
+                                            let notification = format!("[+] Joined [{0}] room", message.arg.unwrap());
+                                            state.push_notification(notification);
                                         },
                                         "left" => {
-                                            let message = message.unwrap();
+                                            let message = message.content.unwrap();
                                             state.push_notification(message.to_string());
                                         },
                                         "rooms" => {
-                                            if let Some(message) = message {
+                                            if let Some(message) = message.content {
                                                 let mut rooms: Vec<&str> = Vec::new();
                                                 if message.contains(',') {
                                                     rooms = message.split(',').collect();
                                                 } else {
-                                                    rooms.push(message);
+                                                    rooms.push(&message);
                                                 }
                                                 state.push_notification("[+] List of rooms:".to_string());
                                                 for room in rooms {
@@ -123,7 +123,7 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                                             }
                                         },
                                         "users" => {
-                                            if let Some(message) = message {
+                                            if let Some(message) = message.content {
                                                 let mut user_list: Vec<String> = Vec::new();
                                                 if message.contains(',') {
                                                     user_list = message.split(',').map(|s| s.to_string()).collect();
@@ -146,50 +146,46 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                                             }
                                         },
                                         "registered" => {
-                                            match arg {
-                                                Some("success") => {
-                                                    let id: u64 = message.unwrap().parse().unwrap();
-                                                    state.set_session_id(id);
-                                                    state.set_as_registered();
-                                                    state.push_notification(format!("[+] Registered as {0} #{1}", state.get_name(), id));
-                                                },
-                                                Some("taken") => {
-                                                    (state, connection_handle) = terminate_connection(&mut state);
-                                                    state.push_notification("[-] Name is already taken".to_string());
-                                                    state.push_notification("[-] Closing connection to server".to_string());
-                                                    state.push_notification("[*] Change name with \"/name\" command and reconnect".to_string());
-                                                },
-                                                Some("failed") => {
-                                                    (state, connection_handle) = terminate_connection(&mut state);
-                                                    state.push_notification("[-] Failed to register user".to_string());
-                                                    state.push_notification("[-] Closing connection to server".to_string());
-                                                },
-                                                _ => {},
-                                            }
+                                            let notification = format!("[+] Registered as [{0}]", message.arg.clone().unwrap());
+                                            state.push_notification(notification);
+                                            state.set_name(message.arg.unwrap());
+                                            state.set_session_id(message.content.unwrap().parse::<u64>().unwrap());
+                                            state.set_as_registered();
                                         }
                                         "changedname" => {
-                                            match arg {
-                                                Some("failed") => {
-                                                    let message = message.unwrap();
+                                            match message.arg.unwrap().as_str() {
+                                                "failed" => {
+                                                    let message = message.content.unwrap();
                                                     state.push_notification(message.to_string());
                                                 }
-                                                Some(new_name) => {
+                                                new_name => {
                                                     state.set_name(new_name.to_string());
-                                                    let message = message.unwrap();
+                                                    let message = message.content.unwrap();
                                                     state.push_notification(message.to_string());
                                                 }
                                                 _ => {}
                                             }
                                         },
                                         "created" => {
-                                            match arg {
-                                                Some("success") => {
+                                            match message.arg.unwrap().as_str() {
+                                                "success" => {
                                                     state.push_notification("[+] Successfully created room".to_string());
                                                 },
-                                                Some("failed") => {
+                                                "failed" => {
                                                     state.push_notification("[-] Failed to create room".to_string());
                                                 },
                                                 _ => {}
+                                            }
+                                        }
+                                        "failed" => {
+                                            let notification = format!("[-] {0} failed: {1}", message.arg.clone().unwrap(), message.content.unwrap());
+                                            state.push_notification(notification);
+                                            match message.arg.unwrap().as_str() {
+                                                "register" => {
+                                                    (state, connection_handle) = terminate_connection(&mut state);
+                                                    state.push_notification("[-] Closing connection to server".to_string());
+                                                }
+                                                _ => {},
                                             }
                                         }
                                         _ => {},
@@ -216,12 +212,26 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                     action = action_rx.recv() => {
                         match action.unwrap() {
                             Action::SetName { name } => {
-                                let message = common::pack_message("name", Some(&name), &state.get_name(), state.get_session_id(), None);
+                                let message = common::Message {
+                                    cmd: String::from("name"),
+                                    arg: Some(name),
+                                    sender: state.get_name(),
+                                    id: state.get_session_id(),
+                                    content: None,
+                                };
+                                let message = common::pack_message(message);
                                 state.push_notification("[*] Attemping name change".to_string());
                                 let _ = req_handler.writer.write_all(message.as_bytes()).await;
                             },
                             Action::SendTo { room, message } => {
-                                let message = common::pack_message("sendto", Some(&room), &state.get_name(), state.get_session_id(), Some(&message));
+                                let message = common::Message {
+                                    cmd: String::from("sendto"),
+                                    arg: Some(room),
+                                    sender: state.get_name(),
+                                    id: state.get_session_id(),
+                                    content: Some(message),
+                                };
+                                let message = common::pack_message(message);
                                 let _ = req_handler.writer.write_all(message.as_bytes()).await;
                             },
                             Action::PrivMsg{ user, message } => {
@@ -229,24 +239,59 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                                     state.push_notification("[-] Cannot send message to yourself".to_string());
                                 }
                                 else {
-                                    let message = common::pack_message("privmsg", Some(&user), &state.get_name(), state.get_session_id(), Some(&message));
+                                    let message = common::Message {
+                                        cmd: String::from("privmsg"),
+                                        arg: Some(user),
+                                        sender: state.get_name(),
+                                        id: state.get_session_id(),
+                                        content: Some(message),
+                                    };
+                                    let message = common::pack_message(message);
                                     let _ = req_handler.writer.write_all(message.as_bytes()).await;
                                 }
                             },
                             Action::Join { room } => {
-                                let message = common::pack_message("join", Some(&room), &state.get_name(), state.get_session_id(), None);
+                                let message = common::Message {
+                                    cmd: String::from("join"),
+                                    arg: Some(room),
+                                    sender: state.get_name(),
+                                    id: state.get_session_id(),
+                                    content: None,
+                                };
+                                let message = common::pack_message(message);
                                 let _ = req_handler.writer.write_all(message.as_bytes()).await;
                             },
                             Action::Leave { room } => {
-                                let message = common::pack_message("leave", Some(&room), &state.get_name(), state.get_session_id(), None);
+                                let message = common::Message {
+                                    cmd: String::from("leave"),
+                                    arg: Some(room),
+                                    sender: state.get_name(),
+                                    id: state.get_session_id(),
+                                    content: None,
+                                };
+                                let message = common::pack_message(message);
                                 let _ = req_handler.writer.write_all(message.as_bytes()).await;
                             }
                             Action::List { opt } => {
-                                let message = common::pack_message("list", Some(&opt), &state.get_name(), state.get_session_id(), None);
+                                let message = common::Message {
+                                    cmd: String::from("list"),
+                                    arg: Some(opt),
+                                    sender: state.get_name(),
+                                    id: state.get_session_id(),
+                                    content: None,
+                                };
+                                let message = common::pack_message(message);
                                 let _ = req_handler.writer.write_all(message.as_bytes()).await;
                             },
                             Action::Create { room } => {
-                                let message = common::pack_message("create", Some(&room), &state.get_name(), state.get_session_id(), None);
+                                let message = common::Message {
+                                    cmd: String::from("create"),
+                                    arg: Some(room),
+                                    sender: state.get_name(),
+                                    id: state.get_session_id(),
+                                    content: None,
+                                };
+                                let message = common::pack_message(message);
                                 let _ = req_handler.writer.write_all(message.as_bytes()).await;
                             },
                             Action::Disconnect => {
@@ -292,7 +337,14 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                                         // Once connected, registration message is sent which
                                         // includes username
                                         state.push_notification("[*] Registering user".to_string());
-                                        let message = common::pack_message("register", Some(&state.get_name()), &state.get_name(), 0, None);
+                                        let message = common::Message {
+                                            cmd: String::from("register"),
+                                            arg: Some(state.get_name()),
+                                            sender: state.get_name(),
+                                            id: state.get_session_id(),
+                                            content: None,
+                                        };
+                                        let message = common::pack_message(message);
                                         if let Some((_, res_writer)) = connection_handle.as_mut() {
                                             let _ = res_writer.writer.write_all(message.as_bytes()).await;
                                         }

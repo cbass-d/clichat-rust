@@ -1,32 +1,34 @@
-pub fn pack_message(
-    cmd: &str,
-    arg: Option<&str>,
-    sender: &str,
-    id: u64,
-    message: Option<&str>,
-) -> String {
-    let mut packed = String::from("!#");
-    packed.push_str(cmd);
+pub struct Message {
+    pub cmd: String,
+    pub arg: Option<String>,
+    pub sender: String,
+    pub id: u64,
+    pub content: Option<String>,
+}
 
-    if let Some(arg) = arg {
+pub fn pack_message(message: Message) -> String {
+    let mut packed = String::from("!#");
+    packed.push_str(&message.cmd);
+
+    if let Some(arg) = message.arg {
         packed.push('#');
-        packed.push_str(arg);
+        packed.push_str(&arg);
     }
 
     packed.push('#');
-    packed.push_str(sender);
+    packed.push_str(&message.sender);
     packed.push('#');
-    packed.push_str(&id.to_string());
-    if let Some(message) = message {
+    packed.push_str(&message.id.to_string());
+    if let Some(content) = message.content {
         packed.push('#');
-        packed.push_str(message);
+        packed.push_str(&content);
     }
     packed.push_str("#!");
 
     packed
 }
 
-pub fn unpack_message(message: &str) -> Option<(&str, Option<&str>, &str, &str, Option<&str>)> {
+pub fn unpack_message(message: &str) -> Option<Message> {
     if !message.starts_with("!") || !message.ends_with("!") {
         return None;
     }
@@ -37,40 +39,59 @@ pub fn unpack_message(message: &str) -> Option<(&str, Option<&str>, &str, &str, 
     let cmd = tokens[0];
 
     match cmd {
-        "register" | "join" | "leave" | "list" | "name" | "create" | "created" => {
-            let arg = tokens[1];
-            let sender = tokens[2];
-            let id = tokens[3];
+        "register" | "join" | "joined" | "leave" | "list" | "name" | "create" | "created" => {
+            if tokens.len() != 4 {
+                return None;
+            }
+            let arg = tokens[1].to_string();
+            let sender = tokens[2].to_string();
+            let id = tokens[3].parse::<u64>().unwrap();
 
-            Some((cmd, Some(arg), sender, id, None))
+            Some(Message {
+                cmd: cmd.to_string(),
+                arg: Some(arg),
+                sender,
+                id,
+                content: None,
+            })
         }
-        "registered" | "joined" | "left" | "privmsg" => {
-            let arg = tokens[1];
-            let sender = tokens[2];
-            let id = tokens[3];
-            let message = tokens[4];
+        "failed" | "registered" | "left" | "privmsg" | "changedname" | "sendto" | "roommessage" => {
+            if tokens.len() != 5 {
+                return None;
+            }
+            let arg = tokens[1].to_string();
+            let sender = tokens[2].to_string();
+            let id = tokens[3].parse::<u64>().unwrap();
+            let content = tokens[4].to_string();
 
-            Some((cmd, Some(arg), sender, id, Some(message)))
+            Some(Message {
+                cmd: cmd.to_string(),
+                arg: Some(arg),
+                sender,
+                id,
+                content: Some(content),
+            })
         }
         "rooms" | "users" | "message" => {
-            let sender = tokens[1];
-            let id = tokens[2];
-            let message;
+            if tokens.len() != 4 || tokens.len() != 3 {
+                return None;
+            }
+            let sender = tokens[1].to_string();
+            let id = tokens[2].parse::<u64>().unwrap();
+            let content;
             if tokens.len() < 4 {
-                message = None;
+                content = None;
             } else {
-                message = Some(tokens[3]);
+                content = Some(tokens[3].to_string());
             }
 
-            Some((cmd, None, sender, id, message))
-        }
-        "changedname" | "sendto" | "roommessage" => {
-            let arg = tokens[1];
-            let sender = tokens[2];
-            let id = tokens[3];
-            let message = tokens[4];
-
-            Some((cmd, Some(arg), sender, id, Some(message)))
+            Some(Message {
+                cmd: cmd.to_string(),
+                arg: None,
+                sender,
+                id,
+                content,
+            })
         }
         _ => None,
     }

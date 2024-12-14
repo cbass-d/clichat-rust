@@ -1,9 +1,21 @@
+use anyhow::{anyhow, Result};
 use tokio::sync::mpsc::{self};
 
-pub enum ServerAction {
-    AddSession {
+#[derive(Clone)]
+pub enum ServerRequest {
+    Register {
         id: u64,
-        session_channel: mpsc::UnboundedSender<String>,
+        name: String,
+    },
+    JoinRoom {
+        room: String,
+        id: u64,
+    },
+    LeaveRoom {},
+    SendTo {
+        room: String,
+        content: String,
+        id: u64,
     },
     DropSession {
         name: String,
@@ -16,4 +28,12 @@ pub enum ServerAction {
         user_id: u64,
         message: String,
     },
+}
+
+pub enum ServerResponse {
+    Registered { name: String },
+    Joined { room: String },
+    Left {},
+    Created {},
+    Failed { error: String },
 }
