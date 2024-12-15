@@ -1,6 +1,5 @@
 use std::{
     collections::{HashMap, HashSet},
-    io::Result,
     sync::{Arc, Mutex},
 };
 use tokio::sync::broadcast::{self};
@@ -19,6 +18,10 @@ impl RoomManager {
                 .map(|r| (r.clone().lock().unwrap().name.clone(), r))
                 .collect(),
         }
+    }
+
+    pub fn add_room(&mut self, room: Arc<Mutex<Room>>, name: String) {
+        self.rooms.insert(name, room);
     }
 
     pub async fn join(

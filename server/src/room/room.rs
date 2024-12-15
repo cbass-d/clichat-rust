@@ -1,3 +1,4 @@
+use anyhow::{anyhow, Result};
 use std::collections::HashSet;
 use tokio::sync::broadcast::{self};
 
@@ -25,10 +26,10 @@ impl UserHandle {
         self.name.as_ref()
     }
 
-    pub fn send_message(&self, message: String) -> bool {
+    pub fn send_message(&self, message: String) -> Result<()> {
         match self.broadcast_tx.send(message) {
-            Ok(..) => true,
-            Err(..) => false,
+            Ok(..) => Ok(()),
+            Err(..) => Err(anyhow!("Failed to send message to room broadcast channel")),
         }
     }
 }
