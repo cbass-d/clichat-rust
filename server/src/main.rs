@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use std::{
     collections::HashMap,
     io,
-    sync::{atomic, Arc, Mutex},
+    sync::{Arc, Mutex},
     time::Duration,
 };
 use tokio::{
@@ -67,22 +67,42 @@ async fn handle_client(
                 match stream_reader.try_read_buf(&mut buf) {
                     Ok(len) if len > 0 => {
                         let raw_message = String::from_utf8(buf[0..len].to_vec()).unwrap();
-                        println!("{0}", raw_message.clone());
                         if let Some(message) = common::unpack_message(&raw_message) {
                             match message.cmd.as_str() {
                                 "register" => {
                                     let name = message.arg.unwrap();
-                                    let _ = server_request_tx.send(ServerRequest::Register {id, name});
+                                    let _ = server_request_tx.send(ServerRequest::Register { id, name });
                                 },
                                 "join" => {
                                     let room = message.arg.unwrap();
-                                    let _ = server_request_tx.send(ServerRequest::JoinRoom { room, id});
+                                    let _ = server_request_tx.send(ServerRequest::JoinRoom { room, id });
                                 },
                                 "sendto" => {
                                     let room = message.arg.unwrap();
                                     let content = message.content.unwrap();
-                                    let _ = server_request_tx.send(ServerRequest::SendTo {room, content, id});
+                                    let _ = server_request_tx.send(ServerRequest::SendTo { room, content, id });
                                 },
+                                "list" => {
+                                    let opt = message.arg.unwrap();
+                                    let _ = server_request_tx.send(ServerRequest::List { opt, id });
+                                },
+                                "create" => {
+                                    let room = message.arg.unwrap();
+                                    let _ = server_request_tx.send(ServerRequest::CreateRoom { room, id });
+                                },
+                                "leave" => {
+                                    let room = message.arg.unwrap();
+                                    let _ = server_request_tx.send(ServerRequest::LeaveRoom { room, id });
+                                },
+                                "privmsg" => {
+                                    let user = message.arg.unwrap();
+                                    let content = message.content.unwrap();
+                                    let _ = server_request_tx.send(ServerRequest::PrivMsg { user, content, id });
+                                },
+                                "changename" => {
+                                    let new_name = message.arg.unwrap();
+                                    let _ = server_request_tx.send(ServerRequest::ChangeName { new_name, id });
+                                }
                                 _ => {},
                             }
 
@@ -114,7 +134,7 @@ async fn handle_client(
                         let message_response = common::pack_message(message);
                         let _ = stream_writer.write_all(message_response.as_bytes()).await;
                     },
-                    ServerResponse::Joined{ room } => {
+                    ServerResponse::Joined { room } => {
                         let message = common::Message {
                                 cmd: String::from("joined"),
                                 arg: Some(room),
@@ -122,10 +142,70 @@ async fn handle_client(
                                 id: 0,
                                 content: None,
                         };
+
                         let message_response = common::pack_message(message);
-                        println!("{message_response}");
                         let _ = stream_writer.write_all(message_response.as_bytes()).await;
                     },
+                    ServerResponse::Listing { opt, content } => {
+                        let message = common::Message {
+                                cmd: opt,
+                                arg: None,
+                                sender: String::from("server"),
+                                id: 0,
+                                content: Some(content),
+                        };
+
+                        let message_response = common::pack_message(message);
+                        let _ = stream_writer.write_all(message_response.as_bytes()).await;
+                    },
+                    ServerResponse::CreatedRoom { room } => {
+                        let message = common::Message {
+                                cmd: String::from("createdroom"),
+                                arg: Some(room),
+                                sender: String::from("server"),
+                                id: 0,
+                                content: None,
+                        };
+
+                        let message_response = common::pack_message(message);
+                        let _ = stream_writer.write_all(message_response.as_bytes()).await;
+                    },
+                    ServerResponse::LeftRoom { room } => {
+                        let message = common::Message {
+                            cmd: String::from("leftroom"),
+                            arg: Some(room),
+                            sender: String::from("server"),
+                            id: 0,
+                            content: None,
+                        };
+
+                        let message_response = common::pack_message(message);
+                        let _ = stream_writer.write_all(message_response.as_bytes()).await;
+                    },
+                    ServerResponse::Messaged { user, content } => {
+                        let message = common::Message {
+                                cmd: String::from("outgoingmsg"),
+                                arg: Some(user),
+                                sender: String::from("server"),
+                                id,
+                                content: Some(content),
+                        };
+
+                        let message_response = common::pack_message(message);
+                        let _ = stream_writer.write_all(message_response.as_bytes()).await;
+                    },
+                    ServerResponse::NameChanged { new_name, old_name } => {
+                        let message = common::Message {
+                                cmd: String::from("changedname"),
+                                arg: Some(new_name),
+                                sender: String::from("server"),
+                                id: 0,
+                                content: Some(old_name),
+                        };
+
+                        let message_response = common::pack_message(message);
+                        let _ = stream_writer.write_all(message_response.as_bytes()).await;
+                    }
                     ServerResponse::Failed { error } => {
                         let message = common::Message {
                                 cmd: String::from("failed"),
@@ -138,11 +218,12 @@ async fn handle_client(
                         let message_response = common::pack_message(message);
                         let _ = stream_writer.write_all(message_response.as_bytes()).await;
                     },
-                    _ => {},
                 }
             },
             message = session_rx.recv() => {
-                    println!("{message:?}");
+                if let Some(message) = message {
+                        let _ = stream_writer.write_all(message.as_bytes()).await;
+                }
             },
             _ = server_shutdown_rx.recv() => {
                 termination = Terminate::ServerClose;
@@ -152,6 +233,8 @@ async fn handle_client(
 
         buf.clear();
     }
+
+    let _ = server_request_tx.send(ServerRequest::DropSession { id });
 
     Ok(termination)
 }
@@ -176,8 +259,8 @@ async fn main() -> Result<()> {
 
     // Initialize default rooms in server
     let main_room = Room::new("main");
-    let server_rooms: Vec<Arc<Mutex<Room>>> = vec![Arc::new(Mutex::new(main_room))];
-    let room_manager = RoomManager::new(server_rooms);
+    let default_rooms: Vec<Arc<Mutex<Room>>> = vec![Arc::new(Mutex::new(main_room))];
+    let mut room_manager = RoomManager::new(default_rooms);
     println!("[+] Server started...\n[+] Listening for connections...");
 
     // Initiliaze the needed structures for main loop
@@ -198,6 +281,7 @@ async fn main() -> Result<()> {
         tokio::select! {
             _ = ticker.tick() => {},
             _ = signal::ctrl_c() => {
+                let _ = server_shutdown_tx.send(Terminate::ServerClose);
                 break;
             },
             Ok((stream, _)) = listener.accept() => {
@@ -227,6 +311,8 @@ async fn main() -> Result<()> {
                         else {
                             username_map.insert(name.clone(), id);
                             ids_map.insert(id, name.clone());
+                            let session = sessions_map.get_mut(&id).unwrap();
+                            session.set_name(name.clone());
                             let _ = handle.send(ServerResponse::Registered { name: name.clone() });
                         }
                     },
@@ -258,8 +344,65 @@ async fn main() -> Result<()> {
                                 let _ = handle.send(ServerResponse::Joined { room });
                             },
                             None => {
-                                let _ = handle.send(ServerResponse::Failed {error: String::from("Failed to join room")});
+                                let _ = handle.send(ServerResponse::Failed { error: String::from("Failed to join room") });
                             }
+                        }
+                    },
+                    ServerRequest::List { opt, id } => {
+                        let handle = client_handles.get(&id).unwrap();
+                        let session = sessions_map.get_mut(&id).unwrap();
+
+                        match opt.as_str() {
+                            "rooms" => {
+                                let user_rooms: Vec<String> = session.rooms.keys().into_iter().map(|k| k.to_string()).collect();
+                                let user_rooms = user_rooms.join(",");
+
+                                let _ = handle.send(ServerResponse::Listing { opt, content: user_rooms });
+                            },
+                            "allrooms" => {
+                                let all_rooms = room_manager.get_rooms();
+                                let all_rooms: String = all_rooms.into_iter()
+                                    .map(|s| s.to_string())
+                                    .collect::<Vec<String>>()
+                                    .join(",");
+
+                                let _ = handle.send(ServerResponse::Listing { opt, content: all_rooms });
+                            },
+                            "users" => {
+                                let server_users: Vec<String> = username_map.keys().into_iter().map(|k| k.to_string()).collect();
+                                let server_users = server_users.join(",");
+
+                                let _ = handle.send(ServerResponse::Listing { opt, content: server_users });
+                            },
+                            _ => {
+                                let _ = handle.send(ServerResponse::Failed { error: String::from("Not a valid argument") });
+                            },
+                        }
+                    },
+                    ServerRequest::CreateRoom { room, id } => {
+                        let handle = client_handles.get(&id).unwrap();
+                        let server_rooms = room_manager.get_rooms();
+
+                        if server_rooms.contains(&room) {
+                            let _ = handle.send(ServerResponse::Failed { error: String::from("Room already exists") });
+                        }
+                        else {
+                            let new_room = Arc::new(Mutex::new(Room::new(&room)));
+                            room_manager.add_room(new_room, room.clone());
+
+                            let _ = handle.send(ServerResponse::CreatedRoom { room });
+                        }
+                    },
+                    ServerRequest::LeaveRoom { room, id } => {
+                        let handle = client_handles.get(&id).unwrap();
+                        let session = sessions_map.get_mut(&id).unwrap();
+
+                        if session.rooms.contains_key(&room) {
+                            let _ = session.leave_room(room.clone());
+                            let _ = handle.send(ServerResponse::LeftRoom { room });
+                        }
+                        else {
+                            let _ = handle.send(ServerResponse::Failed { error: String::from("Not part of room") });
                         }
                     },
                     ServerRequest::SendTo { room, content, id} => {
@@ -268,14 +411,70 @@ async fn main() -> Result<()> {
 
                         match session.rooms.get(&room) {
                             Some((room_handle, _)) => {
-                                let _ = room_handle.send_message(content);
+                                let message = common::Message {
+                                    cmd: String::from("roommessage"),
+                                    arg: Some(room),
+                                    sender: session.get_name(),
+                                    id,
+                                    content: Some(content),
+                                };
+                                let message = common::pack_message(message);
+                                let _ = room_handle.send_message(message);
                             },
                             None => {
-                                let _ = handle.send(ServerResponse::Failed {error: String::from("Not part of room")});
+                                let _ = handle.send(ServerResponse::Failed { error: String::from("Not part of room") });
                             }
                         }
-                    }
-                    _ => {},
+                    },
+                    ServerRequest::PrivMsg { user, content, id } => {
+                        let handle = client_handles.get(&id).unwrap();
+                        let sender = ids_map.get(&id).unwrap();
+                        if let Some(receiver_id) = username_map.get(&user) {
+                            let receiver_session = sessions_map.get(&receiver_id).unwrap();
+                            let message = common::Message {
+                                cmd: String::from("incomingmsg"),
+                                arg: None,
+                                sender: sender.to_string(),
+                                id,
+                                content: Some(content.clone()),
+                            };
+
+                            let message = common::pack_message(message);
+                            let _ = receiver_session.mpsc_tx.send(message);
+
+                            let _ = handle.send(ServerResponse::Messaged { user, content });
+                        }
+                        else {
+                            let _ = handle.send(ServerResponse::Failed { error: String::from("User not found") });
+                        }
+                    },
+                    ServerRequest::ChangeName { new_name, id } => {
+                        let handle = client_handles.get(&id).unwrap();
+                        if username_map.contains_key(&new_name) {
+                            let _ = handle.send(ServerResponse::Failed { error: String::from("Username is already taken") });
+                        }
+                        else {
+                            let session = sessions_map.get_mut(&id).unwrap();
+                            let old_name = session.get_name();
+
+                            // Update data structures
+                            username_map.remove(&old_name);
+                            username_map.insert(new_name.clone(), id);
+                            *ids_map.get_mut(&id).unwrap() = new_name.clone();
+                            session.set_name(new_name.clone());
+
+                            let _ = handle.send(ServerResponse::NameChanged { new_name, old_name });
+                        }
+
+                    },
+                    ServerRequest::DropSession { id } => {
+                        let user = ids_map.get(&id).unwrap();
+                        let user = user.clone();
+                        ids_map.remove(&id);
+                        username_map.remove(&user);
+                        sessions_map.remove(&id);
+                        client_handles.remove(&id);
+                    },
                 }
             },
         }

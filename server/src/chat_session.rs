@@ -1,11 +1,11 @@
-use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use anyhow::Result;
+use std::collections::HashMap;
 use tokio::{
     sync::mpsc::{self},
     task::{AbortHandle, JoinSet},
 };
 
-use super::{room::UserHandle, RoomManager};
+use super::room::UserHandle;
 
 pub struct ChatSession {
     name: String,
@@ -43,16 +43,12 @@ impl ChatSession {
         self.id
     }
 
-    pub fn leave_room(&mut self, room: String) -> String {
-        if !self.rooms.contains_key(&room) {
-            return format!("[-] Not part of {room}");
-        }
-
+    pub fn leave_room(&mut self, room: String) -> Result<()> {
         let (_, room_task) = self.rooms.get(&room).unwrap();
         room_task.abort();
 
         let _ = self.rooms.remove(&room);
 
-        return format!("[+] Left {room}");
+        Ok(())
     }
 }

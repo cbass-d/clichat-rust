@@ -39,7 +39,8 @@ pub fn unpack_message(message: &str) -> Option<Message> {
     let cmd = tokens[0];
 
     match cmd {
-        "register" | "join" | "joined" | "leave" | "list" | "name" | "create" | "created" => {
+        "register" | "join" | "joined" | "leave" | "leftroom" | "list" | "changename"
+        | "create" | "createdroom" => {
             if tokens.len() != 4 {
                 return None;
             }
@@ -55,7 +56,8 @@ pub fn unpack_message(message: &str) -> Option<Message> {
                 content: None,
             })
         }
-        "failed" | "registered" | "left" | "privmsg" | "changedname" | "sendto" | "roommessage" => {
+        "failed" | "registered" | "privmsg" | "outgoingmsg" | "changedname" | "sendto"
+        | "roommessage" => {
             if tokens.len() != 5 {
                 return None;
             }
@@ -72,8 +74,8 @@ pub fn unpack_message(message: &str) -> Option<Message> {
                 content: Some(content),
             })
         }
-        "rooms" | "users" | "message" => {
-            if tokens.len() != 4 || tokens.len() != 3 {
+        "rooms" | "allrooms" | "users" | "incomingmsg" => {
+            if tokens.len() != 4 && tokens.len() != 3 {
                 return None;
             }
             let sender = tokens[1].to_string();
