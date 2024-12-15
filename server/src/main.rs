@@ -16,7 +16,7 @@ use tokio::{
         broadcast::{self},
         mpsc::{self},
     },
-    task::JoinSet,
+    task::{AbortHandle, JoinSet},
 };
 
 use chat_session::ChatSession;
@@ -34,6 +34,7 @@ type ClientHandle = mpsc::UnboundedSender<ServerResponse>;
 #[derive(Clone)]
 enum Terminate {
     ClientClosed,
+    SocketError,
     ServerClose,
 }
 
@@ -117,7 +118,10 @@ async fn handle_client(
                         break;
                     },
                     Err(e) if e.kind() == io::ErrorKind::WouldBlock => {},
-                    Err(e) => {},
+                    Err(_) => {
+                        termination = Terminate::SocketError;
+                        break;
+                    },
                 }
             },
             response = server_response_rx.recv() => {
@@ -269,14 +273,20 @@ async fn main() -> Result<()> {
     // * HashMap to map client IDs to the clients channel for writing server responses
     // * HashMap to map client IDs to their usernames and vice versa
     // * HashMap to map client IDs to ChatSession structures
+    // * HashMap for client task abort handles
     let mut ticker = tokio::time::interval(Duration::from_millis(250));
     let mut client_id: u64 = 1;
     let mut client_handles: HashMap<u64, ClientHandle> = HashMap::new();
     let mut username_map: HashMap<String, u64> = HashMap::new();
     let mut ids_map: HashMap<u64, String> = HashMap::new();
     let mut sessions_map: HashMap<u64, ChatSession> = HashMap::new();
+    let mut abort_handles: HashMap<u64, AbortHandle> = HashMap::new();
 
     // Main accept/request handler loop
+    // Sources of events:
+    // * Ctrl-c signal to kill server
+    // * Request MPSC channel
+    // * Client connections join set
     loop {
         tokio::select! {
             _ = ticker.tick() => {},
@@ -284,12 +294,23 @@ async fn main() -> Result<()> {
                 let _ = server_shutdown_tx.send(Terminate::ServerClose);
                 break;
             },
+            res = client_connections.join_next() => {
+                match res {
+                    Some(Ok(_)) => {
+                        println!("[-] Client closed");
+                    }
+                    Some(Err(_)) => {
+                        println!("[-] Client crashed");
+                    }
+                    _ => {},
+                }
+            },
             Ok((stream, _)) = listener.accept() => {
                 let (response_tx, response_rx) = mpsc::unbounded_channel::<ServerResponse>();
                 let (new_session, session_rx) = ChatSession::new(client_id);
                 sessions_map.insert(client_id, new_session);
 
-                client_connections.spawn(handle_client(
+                let abort_handle = client_connections.spawn(handle_client(
                     stream,
                     client_id,
                     server_shutdown_rx.resubscribe(),
@@ -299,6 +320,7 @@ async fn main() -> Result<()> {
                 ));
                 let client_handle = response_tx;
                 client_handles.insert(client_id, client_handle);
+                abort_handles.insert(client_id, abort_handle);
                 client_id += 1;
             },
             request = request_rx.recv() => {
@@ -468,12 +490,18 @@ async fn main() -> Result<()> {
 
                     },
                     ServerRequest::DropSession { id } => {
-                        let user = ids_map.get(&id).unwrap();
-                        let user = user.clone();
-                        ids_map.remove(&id);
-                        username_map.remove(&user);
-                        sessions_map.remove(&id);
-                        client_handles.remove(&id);
+                        // When register call fails info is not stored
+                        if ids_map.contains_key(&id) {
+                            let user = ids_map.get(&id).unwrap();
+                            let user = user.clone();
+                            ids_map.remove(&id);
+                            username_map.remove(&user);
+                            sessions_map.remove(&id);
+                            client_handles.remove(&id);
+                        }
+
+                        let abort_handle = abort_handles.get(&id).unwrap();
+                        abort_handle.abort();
                     },
                 }
             },

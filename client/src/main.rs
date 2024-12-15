@@ -413,7 +413,7 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                                 state.push_notification("[-] Invalid command".to_string());
                             },
                             _ => {
-                                state.push_notification("[-] Not connected to a serve".to_string());
+                                state.push_notification("[-] Not connected to a server".to_string());
                             }
                         }
                         update = true;
