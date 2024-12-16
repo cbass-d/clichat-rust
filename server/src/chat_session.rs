@@ -9,21 +9,19 @@ use super::room::UserHandle;
 
 pub struct ChatSession {
     name: String,
-    id: u64,
     pub rooms: HashMap<String, (UserHandle, AbortHandle)>,
-    pub room_task_set: JoinSet<()>,
+    pub room_task_set: JoinSet<()>, // Threads for receivng room messages
     pub mpsc_tx: mpsc::UnboundedSender<String>,
 }
 
 impl ChatSession {
-    pub fn new(id: u64) -> (ChatSession, mpsc::UnboundedReceiver<String>) {
+    pub fn new() -> (ChatSession, mpsc::UnboundedReceiver<String>) {
         let (mpsc_tx, mpsc_rx) = mpsc::unbounded_channel();
 
         (
             ChatSession {
                 rooms: HashMap::new(),
                 name: String::new(),
-                id,
                 room_task_set: JoinSet::new(),
                 mpsc_tx,
             },
@@ -37,10 +35,6 @@ impl ChatSession {
 
     pub fn get_name(&self) -> String {
         self.name.clone()
-    }
-
-    pub fn get_id(&self) -> u64 {
-        self.id
     }
 
     pub fn leave_room(&mut self, room: String) -> Result<()> {

@@ -41,12 +41,10 @@ impl Component for Primary {
 impl ComponentRender<RenderProps> for Primary {
     fn render(&self, frame: &mut Frame, props: RenderProps) {
         let mut rev_buffer = self.print_buffer.clone();
-        let mut title = String::new();
-        if self.title.is_empty() {
-            title = format!("CLI CHAT RUST");
-        } else {
-            title = format!("CLI CHAT RUST - ({0})", self.title);
-        }
+        let title = match self.title.is_empty() {
+            true => format!("CLI CHAT RUST"),
+            false => self.title.clone(),
+        };
         rev_buffer.reverse();
         let text = List::new(
             rev_buffer

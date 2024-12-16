@@ -7,7 +7,6 @@ pub enum ConnectionStatus {
 #[derive(Clone)]
 pub struct State {
     connection_status: ConnectionStatus,
-    registered: bool,
     current_server: String,
     name: String,
     session_id: u64,
@@ -42,7 +41,6 @@ impl Default for State {
 
         State {
             connection_status: ConnectionStatus::Unitiliazed,
-            registered: false,
             current_server: String::new(),
             name: String::new(),
             session_id: std::u64::MAX,
@@ -83,10 +81,6 @@ impl State {
 
     pub fn set_connection_status(&mut self, status: ConnectionStatus) {
         self.connection_status = status;
-    }
-
-    pub fn set_as_registered(&mut self) {
-        self.registered = true;
     }
 
     pub fn exit(&mut self) {

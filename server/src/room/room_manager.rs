@@ -7,7 +7,7 @@ use tokio::sync::broadcast::{self};
 use super::{Room, UserHandle};
 
 pub struct RoomManager {
-    rooms: HashMap<String, Arc<Mutex<Room>>>,
+    pub rooms: HashMap<String, Arc<Mutex<Room>>>,
 }
 
 impl RoomManager {

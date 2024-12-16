@@ -3,7 +3,6 @@ use std::{
     collections::HashMap,
     io,
     sync::{Arc, Mutex},
-    time::Duration,
 };
 use tokio::{
     io::AsyncWriteExt,
@@ -62,6 +61,11 @@ async fn handle_client(
     let mut buf: Vec<u8> = Vec::with_capacity(4096);
     let mut last_command: String = String::new();
 
+    // Sources of events
+    // * Client Tcp stream
+    // * Server response MPSC channel
+    // * Client session MPSC channel
+    // * Server shutdown broadcast channel
     loop {
         tokio::select! {
             _ = stream_reader.readable() => {
@@ -107,6 +111,7 @@ async fn handle_client(
                                 _ => {},
                             }
 
+                            // Store command for reporting purposes
                             last_command = message.cmd;
                         }
                         else {
@@ -274,7 +279,6 @@ async fn main() -> Result<()> {
     // * HashMap to map client IDs to their usernames and vice versa
     // * HashMap to map client IDs to ChatSession structures
     // * HashMap for client task abort handles
-    let mut ticker = tokio::time::interval(Duration::from_millis(250));
     let mut client_id: u64 = 1;
     let mut client_handles: HashMap<u64, ClientHandle> = HashMap::new();
     let mut username_map: HashMap<String, u64> = HashMap::new();
@@ -289,7 +293,6 @@ async fn main() -> Result<()> {
     // * Client connections join set
     loop {
         tokio::select! {
-            _ = ticker.tick() => {},
             _ = signal::ctrl_c() => {
                 let _ = server_shutdown_tx.send(Terminate::ServerClose);
                 break;
@@ -307,7 +310,7 @@ async fn main() -> Result<()> {
             },
             Ok((stream, _)) = listener.accept() => {
                 let (response_tx, response_rx) = mpsc::unbounded_channel::<ServerResponse>();
-                let (new_session, session_rx) = ChatSession::new(client_id);
+                let (new_session, session_rx) = ChatSession::new();
                 sessions_map.insert(client_id, new_session);
 
                 let abort_handle = client_connections.spawn(handle_client(
@@ -420,8 +423,17 @@ async fn main() -> Result<()> {
                         let session = sessions_map.get_mut(&id).unwrap();
 
                         if session.rooms.contains_key(&room) {
-                            let _ = session.leave_room(room.clone());
-                            let _ = handle.send(ServerResponse::LeftRoom { room });
+                            let room_name = room.clone();
+
+                            // Remove user from Room inside RoomManager by consuming the
+                            let room = room_manager.rooms.get_mut(&room).unwrap();
+                            let mut room = room.lock().unwrap();
+                            room.leave(session.get_name());
+
+                            // Remove room from client session
+                            let _ = session.leave_room(room_name.clone());
+
+                            let _ = handle.send(ServerResponse::LeftRoom { room: room_name });
                         }
                         else {
                             let _ = handle.send(ServerResponse::Failed { error: String::from("Not part of room") });

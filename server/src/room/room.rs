@@ -2,28 +2,14 @@ use anyhow::{anyhow, Result};
 use std::collections::HashSet;
 use tokio::sync::broadcast::{self};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct UserHandle {
-    room: String,
-    name: String,
     broadcast_tx: broadcast::Sender<String>,
 }
 
 impl UserHandle {
-    pub fn new(room: String, name: String, broadcast_tx: broadcast::Sender<String>) -> Self {
-        UserHandle {
-            room,
-            name,
-            broadcast_tx,
-        }
-    }
-
-    pub fn room(&self) -> &str {
-        self.room.as_ref()
-    }
-
-    pub fn name(&self) -> &str {
-        self.name.as_ref()
+    pub fn new(broadcast_tx: broadcast::Sender<String>) -> Self {
+        UserHandle { broadcast_tx }
     }
 
     pub fn send_message(&self, message: String) -> Result<()> {
@@ -55,12 +41,13 @@ impl Room {
         let broadcast_tx = self.broadcast_tx.clone();
         let broadcast_rx = self.broadcast_tx.subscribe();
 
-        let user_handle = UserHandle::new(self.name.clone(), user, broadcast_tx);
+        let user_handle = UserHandle::new(broadcast_tx);
+        self.users.insert(user);
 
         (broadcast_rx, user_handle)
     }
 
-    pub fn leave(&mut self, user_handle: UserHandle) {
-        self.users.remove(user_handle.name());
+    pub fn leave(&mut self, user: String) {
+        self.users.remove(&user);
     }
 }
