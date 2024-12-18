@@ -1,7 +1,7 @@
 use super::component::{Component, ComponentRender, RenderProps};
 use super::input_box::InputBox;
 use super::primary::Primary;
-use crate::state_handler::{action::Action, state::State};
+use client::{state_handler::action::Action, ClientState};
 
 use crossterm::event::KeyEvent;
 use ratatui::{
@@ -19,7 +19,7 @@ pub struct MainPage {
 impl MainPage {}
 
 impl Component for MainPage {
-    fn new(state: &State, action_tx: UnboundedSender<Action>) -> Self
+    fn new(state: &ClientState, action_tx: UnboundedSender<Action>) -> Self
     where
         Self: Sized,
     {
@@ -29,7 +29,7 @@ impl Component for MainPage {
         }
     }
 
-    fn update(self, state: &State) -> Self
+    fn update(self, state: &ClientState) -> Self
     where
         Self: Sized,
     {

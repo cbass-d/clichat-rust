@@ -1,4 +1,4 @@
-use crate::state_handler::{action::Action, state::State};
+use client::{state_handler::action::Action, ClientState};
 use crossterm::event::KeyEvent;
 use ratatui::{layout::Rect, style::Color, Frame};
 use tokio::sync::mpsc::UnboundedSender;
@@ -9,11 +9,11 @@ pub struct RenderProps {
 }
 
 pub trait Component {
-    fn new(state: &State, action_tx: UnboundedSender<Action>) -> Self
+    fn new(state: &ClientState, action_tx: UnboundedSender<Action>) -> Self
     where
         Self: Sized;
 
-    fn update(self, state: &State) -> Self
+    fn update(self, state: &ClientState) -> Self
     where
         Self: Sized;
 

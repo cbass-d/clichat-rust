@@ -8,9 +8,9 @@ use ratatui::{
 use tokio::sync::mpsc::UnboundedSender;
 
 use super::component::{Component, ComponentRender, RenderProps};
-use crate::state_handler::{
-    action::{parse_command, Action},
-    state::State,
+use client::{
+    state_handler::action::{parse_command, Action},
+    ClientState,
 };
 
 pub struct InputBox {
@@ -85,21 +85,21 @@ impl InputBox {
 }
 
 impl Component for InputBox {
-    fn new(state: &State, action_tx: UnboundedSender<Action>) -> Self {
+    fn new(state: &ClientState, action_tx: UnboundedSender<Action>) -> Self {
         Self {
             char_index: 0,
             input: String::new(),
-            prompt: state.get_name(),
+            prompt: state.username.clone(),
             action_tx,
         }
     }
 
-    fn update(self, state: &State) -> Self
+    fn update(self, state: &ClientState) -> Self
     where
         Self: Sized,
     {
         Self {
-            prompt: state.get_name(),
+            prompt: state.username.clone(),
             ..self
         }
     }

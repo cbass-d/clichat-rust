@@ -1,5 +1,5 @@
 use super::component::{Component, ComponentRender, RenderProps};
-use crate::state_handler::{action::Action, state::State};
+use client::{state_handler::action::Action, ClientState};
 
 use crossterm::event::KeyEvent;
 use ratatui::{
@@ -15,23 +15,23 @@ pub struct Primary {
 }
 
 impl Component for Primary {
-    fn new(state: &State, _action_tx: UnboundedSender<Action>) -> Self
+    fn new(state: &ClientState, _action_tx: UnboundedSender<Action>) -> Self
     where
         Self: Sized,
     {
         Self {
             print_buffer: state.notifications.clone(),
-            title: state.get_server(),
+            title: state.current_server.clone(),
         }
     }
 
-    fn update(self, state: &State) -> Self
+    fn update(self, state: &ClientState) -> Self
     where
         Self: Sized,
     {
         Self {
             print_buffer: state.notifications.clone(),
-            title: state.get_server(),
+            title: state.current_server.clone(),
         }
     }
 

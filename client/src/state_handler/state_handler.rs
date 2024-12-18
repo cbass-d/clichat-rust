@@ -5,16 +5,16 @@ use ratatui::{
     Terminal,
 };
 
-use crate::state_handler::state::State;
+use crate::ClientState;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 pub struct StateHandler {
-    pub state_tx: UnboundedSender<State>,
+    pub state_tx: UnboundedSender<ClientState>,
 }
 
 impl StateHandler {
-    pub fn new() -> (Self, UnboundedReceiver<State>) {
-        let (state_tx, state_rx) = mpsc::unbounded_channel::<State>();
+    pub fn new() -> (Self, UnboundedReceiver<ClientState>) {
+        let (state_tx, state_rx) = mpsc::unbounded_channel::<ClientState>();
 
         (Self { state_tx }, state_rx)
     }

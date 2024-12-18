@@ -1,6 +1,6 @@
 use super::components::component::{Component, ComponentRender};
 use super::components::main_page::MainPage;
-use crate::state_handler::{action::Action, state::State};
+use client::{state_handler::action::Action, ClientState};
 
 use crossterm::event::KeyEvent;
 use ratatui::Frame;
@@ -11,7 +11,7 @@ pub struct AppRouter {
 }
 
 impl Component for AppRouter {
-    fn new(state: &State, action_tx: UnboundedSender<Action>) -> Self
+    fn new(state: &ClientState, action_tx: UnboundedSender<Action>) -> Self
     where
         Self: Sized,
     {
@@ -20,7 +20,7 @@ impl Component for AppRouter {
         }
     }
 
-    fn update(self, state: &State) -> Self
+    fn update(self, state: &ClientState) -> Self
     where
         Self: Sized,
     {

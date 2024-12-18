@@ -1,4 +1,4 @@
-use crate::state_handler::action::Action;
+use client::state_handler::action::Action;
 use color_eyre::eyre::Result;
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture, KeyEvent},

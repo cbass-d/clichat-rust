@@ -9,59 +9,34 @@ use tokio::{
     sync::broadcast::{Receiver, Sender},
 };
 
-use common::{self};
-use state_handler::{
-    action::Action,
-    state::{ConnectionStatus, State},
-    StateHandler,
+use client::{
+    state_handler::{action::Action, StateHandler},
+    ClientError, ClientState, ConnectionStatus, MessageError,
 };
+use common::{self};
 use tui::{
     app_router::AppRouter,
     components::component::{Component, ComponentRender},
     Event, Tui,
 };
 
-mod client;
-mod state_handler;
 mod tui;
 
 #[derive(Clone)]
 enum Terminate {
-    StateExit,
+    Exit,
     Error,
 }
 
-fn split_stream(stream: TcpStream) -> (OwnedReadHalf, OwnedWriteHalf) {
-    let (reader, writer) = stream.into_split();
-
-    (reader, writer)
-}
-
-async fn establish_connection(server: &str) -> Result<TcpStream> {
+pub async fn establish_connection(server: &str) -> Result<TcpStream> {
     let stream = TcpStream::connect(server).await?;
     return Ok(stream);
 }
 
-fn terminate_connection(state: &mut State) -> (State, Option<(OwnedReadHalf, OwnedWriteHalf)>) {
-    state.set_connection_status(ConnectionStatus::Unitiliazed);
+pub fn split_stream(stream: TcpStream) -> (OwnedReadHalf, OwnedWriteHalf) {
+    let (reader, writer) = stream.into_split();
 
-    (state.clone(), None)
-}
-
-fn handle_failure(
-    failed_cmd: String,
-    mut state: State,
-    mut connection_handle: Option<(OwnedReadHalf, OwnedWriteHalf)>,
-) -> (State, Option<(OwnedReadHalf, OwnedWriteHalf)>) {
-    match failed_cmd.as_str() {
-        "register" => {
-            (state, connection_handle) = terminate_connection(&mut state);
-            state.push_notification("[-] Connection to server closed".to_string());
-        }
-        _ => {}
-    }
-
-    (state, connection_handle)
+    (reader, writer)
 }
 
 async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminate>) -> Result<()> {
@@ -77,7 +52,7 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
     // State Handler
     let state_task = tokio::spawn(async move {
         // Create and send initial state to TUI
-        let mut state = State::default();
+        let mut state = ClientState::default();
         state_handler.state_tx.send(state.clone()).unwrap();
 
         let mut ticker = tokio::time::interval(Duration::from_millis(250));
@@ -87,7 +62,7 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
 
         loop {
             if state.exit {
-                let _ = shutdown_tx.send(Terminate::StateExit);
+                let _ = shutdown_tx.send(Terminate::Exit);
             }
 
             // If a server connection exists
@@ -102,20 +77,19 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                         match reader_stream.try_read_buf(&mut buf) {
                             Ok(len) if len > 0 => {
                                 let raw_message = String::from_utf8(buf[0..len].to_vec()).unwrap();
-                                match client::handle_message(raw_message, &mut state) {
-                                    Ok(_) => {},
+                                match state.handle_message(raw_message) {
+                                    Ok(_) => {}
                                     Err(e) => match e.downcast_ref() {
-                                        Some(client::MessageError::CommandFailed {failed_cmd}) => {
-                                            (state, connection_handle) = handle_failure(failed_cmd.to_string(), state, connection_handle);
+                                        Some(ClientError::CommandFailed { failed_cmd }) => {
+                                            connection_handle = state.handle_failure(failed_cmd.to_string(), connection_handle);
                                         },
-                                        Some(_) => {},
-                                        None => {},
+                                        _ => {},
                                     },
                                 }
                             },
                             Ok(_) => {
                                 let notification = String::from("[-] Connection closed by server");
-                                (state, connection_handle) = terminate_connection(&mut state);
+                                state.terminate_connection();
                                 state.push_notification(notification);
                             },
                             Err(e) if e.kind() == io::ErrorKind::WouldBlock => {},
@@ -131,8 +105,8 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                                 let message = common::Message {
                                     cmd: String::from("changename"),
                                     arg: Some(name),
-                                    sender: state.get_name(),
-                                    id: state.get_session_id(),
+                                    sender: state.username.clone(),
+                                    id: state.session_id,
                                     content: None,
                                 };
                                 let message = common::pack_message(message);
@@ -143,23 +117,23 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                                 let message = common::Message {
                                     cmd: String::from("sendto"),
                                     arg: Some(room),
-                                    sender: state.get_name(),
-                                    id: state.get_session_id(),
+                                    sender: state.username.clone(),
+                                    id: state.session_id,
                                     content: Some(message),
                                 };
                                 let message = common::pack_message(message);
                                 let _ = writer_stream.write_all(message.as_bytes()).await;
                             },
                             Action::PrivMsg{ user, message } => {
-                                if user == state.get_name() {
+                                if user == state.username {
                                     state.push_notification("[-] Cannot send message to yourself".to_string());
                                 }
                                 else {
                                     let message = common::Message {
                                         cmd: String::from("privmsg"),
                                         arg: Some(user),
-                                        sender: state.get_name(),
-                                        id: state.get_session_id(),
+                                        sender: state.username.clone(),
+                                        id: state.session_id,
                                         content: Some(message),
                                     };
                                     let message = common::pack_message(message);
@@ -170,8 +144,8 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                                 let message = common::Message {
                                     cmd: String::from("join"),
                                     arg: Some(room),
-                                    sender: state.get_name(),
-                                    id: state.get_session_id(),
+                                    sender: state.username.clone(),
+                                    id: state.session_id,
                                     content: None,
                                 };
                                 let message = common::pack_message(message);
@@ -181,8 +155,8 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                                 let message = common::Message {
                                     cmd: String::from("leave"),
                                     arg: Some(room),
-                                    sender: state.get_name(),
-                                    id: state.get_session_id(),
+                                    sender: state.username.clone(),
+                                    id: state.session_id,
                                     content: None,
                                 };
                                 let message = common::pack_message(message);
@@ -192,8 +166,8 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                                 let message = common::Message {
                                     cmd: String::from("list"),
                                     arg: Some(opt),
-                                    sender: state.get_name(),
-                                    id: state.get_session_id(),
+                                    sender: state.username.clone(),
+                                    id: state.session_id,
                                     content: None,
                                 };
                                 let message = common::pack_message(message);
@@ -203,8 +177,8 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                                 let message = common::Message {
                                     cmd: String::from("create"),
                                     arg: Some(room),
-                                    sender: state.get_name(),
-                                    id: state.get_session_id(),
+                                    sender: state.username.clone(),
+                                    id: state.session_id,
                                     content: None,
                                 };
                                 let message = common::pack_message(message);
@@ -212,7 +186,8 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                             },
                             Action::Disconnect => {
                                 state.push_notification("[-] Closing connection to server".to_string());
-                                (state, connection_handle) = terminate_connection(&mut state);
+                                state.terminate_connection();
+                                connection_handle = None;
                             },
                             Action::Quit => {
                                 state.exit();
@@ -237,19 +212,19 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                     action = action_rx.recv() => {
                         match action.unwrap() {
                             Action::SetName { name } => {
-                                state.set_name(name.clone());
+                                state.username = name.clone();
                                 state.push_notification(format!("[+] Name set to [{name}]"));
                             },
                             Action::Connect { addr } => {
-                                if state.get_name().is_empty() {
+                                if state.username.is_empty() {
                                     state.push_notification("[-] Must set a name".to_string());
                                     update = true;
                                     continue;
                                 }
                                 match establish_connection(&addr).await {
                                     Ok(stream) => {
-                                        state.set_server(addr);
-                                        state.set_connection_status(ConnectionStatus::Established);
+                                        state.current_server = addr;
+                                        state.connection_status = ConnectionStatus::Established;
                                         let _ = connection_handle.insert(split_stream(stream));
                                         state.push_notification("[+] Successfully connected".to_string());
 
@@ -258,9 +233,9 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                                         state.push_notification("[*] Registering user".to_string());
                                         let message = common::Message {
                                             cmd: String::from("register"),
-                                            arg: Some(state.get_name()),
-                                            sender: state.get_name(),
-                                            id: state.get_session_id(),
+                                            arg: Some(state.username.clone()),
+                                            sender: state.username.clone(),
+                                            id: state.session_id,
                                             content: None,
                                         };
                                         let message = common::pack_message(message);
@@ -270,8 +245,9 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                                         else {
                                             state.push_notification("[-] Failed to get connection handle".to_string());
                                             state.push_notification("[-] Disconnecting from server".to_string());
-                                            (state, connection_handle) = terminate_connection(&mut state);
-                                            state.set_connection_status(ConnectionStatus::Unitiliazed);
+                                            state.terminate_connection();
+                                            connection_handle = None;
+                                            state.connection_status = ConnectionStatus::Unitiliazed;
                                         }
                                     },
                                     Err(e) => {

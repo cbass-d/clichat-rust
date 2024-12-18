@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use std::{
     io,
     sync::{Arc, Mutex},
@@ -22,7 +22,6 @@ use server::room::{room_manager::RoomManager, Room};
 use server::{Client, ClientEnd, ServerError, ServerRequest, ServerResponse, ServerState};
 
 const SERVER_PORT: &str = "6667";
-type ClientHandle = mpsc::UnboundedSender<ServerResponse>;
 
 fn split_stream(stream: TcpStream) -> (OwnedReadHalf, OwnedWriteHalf) {
     let (reader, writer) = stream.into_split();
@@ -261,6 +260,7 @@ async fn main() -> Result<()> {
     let mut room_manager = RoomManager::new(default_rooms);
 
     println!("[+] Server started\n[+] Listening at port {0}", SERVER_PORT);
+
     // Main accept/request handler loop
     // Sources of events:
     // * Ctrl-c signal to kill server
