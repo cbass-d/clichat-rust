@@ -1,6 +1,5 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use std::{
-    collections::HashMap,
     io,
     sync::{Arc, Mutex},
 };
@@ -15,27 +14,15 @@ use tokio::{
         broadcast::{self},
         mpsc::{self},
     },
-    task::{AbortHandle, JoinSet},
 };
 
-use chat_session::ChatSession;
-use room::{room_manager::RoomManager, Room};
-use server_action::{ServerRequest, ServerResponse};
-
-mod chat_session;
-mod room;
-mod server_action;
 use common;
+use server::chat_session::ChatSession;
+use server::room::{room_manager::RoomManager, Room};
+use server::{Client, ClientEnd, ServerError, ServerRequest, ServerResponse, ServerState};
 
 const SERVER_PORT: &str = "6667";
 type ClientHandle = mpsc::UnboundedSender<ServerResponse>;
-
-#[derive(Clone)]
-enum Terminate {
-    ClientClosed,
-    SocketError,
-    ServerClose,
-}
 
 fn split_stream(stream: TcpStream) -> (OwnedReadHalf, OwnedWriteHalf) {
     let (reader, writer) = stream.into_split();
@@ -49,14 +36,14 @@ async fn startup_server() -> Result<TcpListener, std::io::Error> {
 }
 
 async fn handle_client(
-    stream: TcpStream,
     id: u64,
-    mut server_shutdown_rx: broadcast::Receiver<Terminate>,
-    server_request_tx: mpsc::UnboundedSender<ServerRequest>,
+    stream: TcpStream,
+    mut server_shutdown_rx: broadcast::Receiver<ClientEnd>,
     mut server_response_rx: mpsc::UnboundedReceiver<ServerResponse>,
     mut session_rx: mpsc::UnboundedReceiver<String>,
-) -> Result<Terminate> {
-    let termination: Terminate;
+    server_request_tx: mpsc::UnboundedSender<ServerRequest>,
+) -> Result<ClientEnd> {
+    let termination: ClientEnd;
     let (stream_reader, mut stream_writer) = split_stream(stream);
     let mut buf: Vec<u8> = Vec::with_capacity(4096);
     let mut last_command: String = String::new();
@@ -75,8 +62,8 @@ async fn handle_client(
                         if let Some(message) = common::unpack_message(&raw_message) {
                             match message.cmd.as_str() {
                                 "register" => {
-                                    let name = message.arg.unwrap();
-                                    let _ = server_request_tx.send(ServerRequest::Register { id, name });
+                                    let username = message.arg.unwrap();
+                                    let _ = server_request_tx.send(ServerRequest::Register { id, username });
                                 },
                                 "join" => {
                                     let room = message.arg.unwrap();
@@ -100,13 +87,13 @@ async fn handle_client(
                                     let _ = server_request_tx.send(ServerRequest::LeaveRoom { room, id });
                                 },
                                 "privmsg" => {
-                                    let user = message.arg.unwrap();
+                                    let username = message.arg.unwrap();
                                     let content = message.content.unwrap();
-                                    let _ = server_request_tx.send(ServerRequest::PrivMsg { user, content, id });
+                                    let _ = server_request_tx.send(ServerRequest::PrivMsg { username, content, id });
                                 },
                                 "changename" => {
-                                    let new_name = message.arg.unwrap();
-                                    let _ = server_request_tx.send(ServerRequest::ChangeName { new_name, id });
+                                    let new_username = message.arg.unwrap();
+                                    let _ = server_request_tx.send(ServerRequest::ChangeName { new_username, id });
                                 }
                                 _ => {},
                             }
@@ -119,22 +106,22 @@ async fn handle_client(
                         }
                     },
                     Ok(_) => {
-                        termination = Terminate::ClientClosed;
+                        termination = ClientEnd::ClientClosed;
                         break;
                     },
                     Err(e) if e.kind() == io::ErrorKind::WouldBlock => {},
                     Err(_) => {
-                        termination = Terminate::SocketError;
+                        termination = ClientEnd::SocketError;
                         break;
                     },
                 }
             },
             response = server_response_rx.recv() => {
                 match response.unwrap() {
-                    ServerResponse::Registered { name } => {
+                    ServerResponse::Registered { username } => {
                         let message = common::Message {
                                 cmd: String::from("registered"),
-                                arg: Some(name.clone()),
+                                arg: Some(username.clone()),
                                 sender: String::from("server"),
                                 id: 0,
                                 content: Some(id.to_string()),
@@ -191,10 +178,10 @@ async fn handle_client(
                         let message_response = common::pack_message(message);
                         let _ = stream_writer.write_all(message_response.as_bytes()).await;
                     },
-                    ServerResponse::Messaged { user, content } => {
+                    ServerResponse::Messaged { username, content } => {
                         let message = common::Message {
                                 cmd: String::from("outgoingmsg"),
-                                arg: Some(user),
+                                arg: Some(username),
                                 sender: String::from("server"),
                                 id,
                                 content: Some(content),
@@ -203,13 +190,13 @@ async fn handle_client(
                         let message_response = common::pack_message(message);
                         let _ = stream_writer.write_all(message_response.as_bytes()).await;
                     },
-                    ServerResponse::NameChanged { new_name, old_name } => {
+                    ServerResponse::NameChanged { new_username, old_username } => {
                         let message = common::Message {
                                 cmd: String::from("changedname"),
-                                arg: Some(new_name),
+                                arg: Some(new_username),
                                 sender: String::from("server"),
                                 id: 0,
-                                content: Some(old_name),
+                                content: Some(old_username),
                         };
 
                         let message_response = common::pack_message(message);
@@ -235,7 +222,7 @@ async fn handle_client(
                 }
             },
             _ = server_shutdown_rx.recv() => {
-                termination = Terminate::ServerClose;
+                termination = ClientEnd::ServerClose;
                 break;
             }
         }
@@ -254,38 +241,26 @@ async fn main() -> Result<()> {
     let listener = match startup_server().await {
         Ok(listener) => listener,
         Err(e) => {
-            eprintln!("[-] Failed to start server: {e}");
-            return Err(anyhow!("Failed to start server"));
+            let e = e.to_string();
+            eprintln!("[-] Failed to start server");
+            return Err(anyhow!(ServerError::FailedToStart).context(e));
         }
     };
+    let mut server_state = ServerState::default();
 
-    // * Set of tasks/threads for each incoming client connection
-    // * Broadcst channel to handle shut down of server
-    // * Multiple-producer-single-consumer channel for incoming client requests/messages
-    let mut client_connections: JoinSet<Result<Terminate>> = JoinSet::new();
-    let (server_shutdown_tx, server_shutdown_rx) = broadcast::channel::<Terminate>(10);
+    // Broadcst channel to handle shut down of server
+    let (server_shutdown_tx, server_shutdown_rx) = broadcast::channel::<ClientEnd>(10);
+
+    // Multiple-producer-single-consumer channel for incoming client requests/messages
+    // Each client connection will receive a clone of the transmission end
     let (request_tx, mut request_rx) = mpsc::unbounded_channel::<ServerRequest>();
 
     // Initialize default rooms in server
     let main_room = Room::new("main");
     let default_rooms: Vec<Arc<Mutex<Room>>> = vec![Arc::new(Mutex::new(main_room))];
     let mut room_manager = RoomManager::new(default_rooms);
-    println!("[+] Server started...\n[+] Listening for connections...");
 
-    // Initiliaze the needed structures for main loop
-    // * Ticker
-    // * Client Id (client id will be incremental starting from 1)
-    // * HashMap to map client IDs to the clients channel for writing server responses
-    // * HashMap to map client IDs to their usernames and vice versa
-    // * HashMap to map client IDs to ChatSession structures
-    // * HashMap for client task abort handles
-    let mut client_id: u64 = 1;
-    let mut client_handles: HashMap<u64, ClientHandle> = HashMap::new();
-    let mut username_map: HashMap<String, u64> = HashMap::new();
-    let mut ids_map: HashMap<u64, String> = HashMap::new();
-    let mut sessions_map: HashMap<u64, ChatSession> = HashMap::new();
-    let mut abort_handles: HashMap<u64, AbortHandle> = HashMap::new();
-
+    println!("[+] Server started\n[+] Listening at port {0}", SERVER_PORT);
     // Main accept/request handler loop
     // Sources of events:
     // * Ctrl-c signal to kill server
@@ -294,10 +269,10 @@ async fn main() -> Result<()> {
     loop {
         tokio::select! {
             _ = signal::ctrl_c() => {
-                let _ = server_shutdown_tx.send(Terminate::ServerClose);
+                let _ = server_shutdown_tx.send(ClientEnd::ServerClose);
                 break;
             },
-            res = client_connections.join_next() => {
+            res = server_state.connections.join_next() => {
                 match res {
                     Some(Ok(_)) => {
                         println!("[-] Client closed");
@@ -311,209 +286,145 @@ async fn main() -> Result<()> {
             Ok((stream, _)) = listener.accept() => {
                 let (response_tx, response_rx) = mpsc::unbounded_channel::<ServerResponse>();
                 let (new_session, session_rx) = ChatSession::new();
-                sessions_map.insert(client_id, new_session);
+                let id = server_state.get_next_id();
+                server_state.increment_id();
 
-                let abort_handle = client_connections.spawn(handle_client(
+                let client = Client::new(id, new_session, response_tx);
+
+                let abort_handle = server_state.connections.spawn(handle_client(
+                    id,
                     stream,
-                    client_id,
                     server_shutdown_rx.resubscribe(),
-                    request_tx.clone(),
                     response_rx,
                     session_rx,
+                    request_tx.clone(),
                 ));
-                let client_handle = response_tx;
-                client_handles.insert(client_id, client_handle);
-                abort_handles.insert(client_id, abort_handle);
-                client_id += 1;
+
+                server_state.add_new_client(client, abort_handle);
             },
             request = request_rx.recv() => {
                 match request.unwrap() {
-                    ServerRequest::Register {id, name} => {
-                        let handle = client_handles.get(&id).unwrap();
-                        if username_map.contains_key(&name) {
-                            let _ = handle.send(ServerResponse::Failed {error: String::from("Name is already taken")});
-                        }
-                        else {
-                            username_map.insert(name.clone(), id);
-                            ids_map.insert(id, name.clone());
-                            let session = sessions_map.get_mut(&id).unwrap();
-                            session.set_name(name.clone());
-                            let _ = handle.send(ServerResponse::Registered { name: name.clone() });
-                        }
+                    ServerRequest::Register {id, username} => {
+                        match server_state.register(id, username.clone()) {
+                            Ok(()) => {
+                                let client = server_state.clients.get_mut(&id).unwrap();
+                                client.set_username(username);
+                            },
+                            Err(_) => {},
+                        };
                     },
                     ServerRequest::JoinRoom {room, id} => {
-                        let handle = client_handles.get(&id).unwrap();
-                        let user = ids_map.get(&id).unwrap();
-                        let session = sessions_map.get_mut(&id).unwrap();
-
-                        if session.rooms.contains_key(&room) {
-                            let _ = handle.send(ServerResponse::Failed {error: String::from("Already part of room")});
-                            continue;
-                        }
-
-                        match room_manager.join(&room, user).await {
-                            Some((mut broadcast_rx, user_handle)) => {
-
-                                let room_task = session.room_task_set.spawn({
-                                    let mpsc_tx = session.mpsc_tx.clone();
-
-                                    async move {
-                                        while let Ok(message) = broadcast_rx.recv().await {
-                                            let _ = mpsc_tx.send(message);
-                                        }
-                                    }
-                                });
-
-                                session.rooms.insert(room.clone(), (user_handle, room_task));
-
-                                let _ = handle.send(ServerResponse::Joined { room });
-                            },
-                            None => {
-                                let _ = handle.send(ServerResponse::Failed { error: String::from("Failed to join room") });
-                            }
+                        if let Some(client) = server_state.clients.get_mut(&id) {
+                            client.join_room(room, &room_manager).await;
                         }
                     },
                     ServerRequest::List { opt, id } => {
-                        let handle = client_handles.get(&id).unwrap();
-                        let session = sessions_map.get_mut(&id).unwrap();
+                        if let Some(client) = server_state.clients.get(&id) {
+                            let handle = client.get_handle();
+                            let mut content = String::new();
+                            match opt.as_str() {
+                                "users" => {
+                                    let users = server_state.list_users();
+                                    content = users;
+                                }
+                                "rooms" => {
+                                    let session = client.get_session();
+                                    let user_rooms: String = session.rooms.clone().into_keys().map(|s| s.to_string()).collect::<Vec<String>>().join(",");
+                                    content = user_rooms;
+                                }
+                                "allrooms" => {
+                                    let all_rooms = room_manager.get_rooms();
+                                    let all_rooms: String = all_rooms.into_iter().map(|s| s.to_string()).collect::<Vec<String>>().join(",");
+                                    content = all_rooms;
+                                }
+                                _ => {},
+                            }
 
-                        match opt.as_str() {
-                            "rooms" => {
-                                let user_rooms: Vec<String> = session.rooms.keys().into_iter().map(|k| k.to_string()).collect();
-                                let user_rooms = user_rooms.join(",");
-
-                                let _ = handle.send(ServerResponse::Listing { opt, content: user_rooms });
-                            },
-                            "allrooms" => {
-                                let all_rooms = room_manager.get_rooms();
-                                let all_rooms: String = all_rooms.into_iter()
-                                    .map(|s| s.to_string())
-                                    .collect::<Vec<String>>()
-                                    .join(",");
-
-                                let _ = handle.send(ServerResponse::Listing { opt, content: all_rooms });
-                            },
-                            "users" => {
-                                let server_users: Vec<String> = username_map.keys().into_iter().map(|k| k.to_string()).collect();
-                                let server_users = server_users.join(",");
-
-                                let _ = handle.send(ServerResponse::Listing { opt, content: server_users });
-                            },
-                            _ => {
-                                let _ = handle.send(ServerResponse::Failed { error: String::from("Not a valid argument") });
-                            },
+                            let _ = handle.send(ServerResponse::Listing { opt, content });
                         }
                     },
                     ServerRequest::CreateRoom { room, id } => {
-                        let handle = client_handles.get(&id).unwrap();
-                        let server_rooms = room_manager.get_rooms();
+                        if let Some(client) = server_state.clients.get(&id) {
+                            let handle = client.get_handle();
+                            if room_manager.rooms.contains_key(&room) {
+                                let _ = handle.send(ServerResponse::Failed { error: ServerError::RoomAlreadyExists.to_string()});
+                            }
+                            else {
+                                let new_room = Arc::new(Mutex::new(Room::new(&room)));
+                                room_manager.add_room(new_room, room.clone());
 
-                        if server_rooms.contains(&room) {
-                            let _ = handle.send(ServerResponse::Failed { error: String::from("Room already exists") });
-                        }
-                        else {
-                            let new_room = Arc::new(Mutex::new(Room::new(&room)));
-                            room_manager.add_room(new_room, room.clone());
-
-                            let _ = handle.send(ServerResponse::CreatedRoom { room });
-                        }
-                    },
-                    ServerRequest::LeaveRoom { room, id } => {
-                        let handle = client_handles.get(&id).unwrap();
-                        let session = sessions_map.get_mut(&id).unwrap();
-
-                        if session.rooms.contains_key(&room) {
-                            let room_name = room.clone();
-
-                            // Remove user from Room inside RoomManager by consuming the
-                            let room = room_manager.rooms.get_mut(&room).unwrap();
-                            let mut room = room.lock().unwrap();
-                            room.leave(session.get_name());
-
-                            // Remove room from client session
-                            let _ = session.leave_room(room_name.clone());
-
-                            let _ = handle.send(ServerResponse::LeftRoom { room: room_name });
-                        }
-                        else {
-                            let _ = handle.send(ServerResponse::Failed { error: String::from("Not part of room") });
-                        }
-                    },
-                    ServerRequest::SendTo { room, content, id} => {
-                        let handle = client_handles.get(&id).unwrap();
-                        let session = sessions_map.get_mut(&id).unwrap();
-
-                        match session.rooms.get(&room) {
-                            Some((room_handle, _)) => {
-                                let message = common::Message {
-                                    cmd: String::from("roommessage"),
-                                    arg: Some(room),
-                                    sender: session.get_name(),
-                                    id,
-                                    content: Some(content),
-                                };
-                                let message = common::pack_message(message);
-                                let _ = room_handle.send_message(message);
-                            },
-                            None => {
-                                let _ = handle.send(ServerResponse::Failed { error: String::from("Not part of room") });
+                                let _ = handle.send(ServerResponse::CreatedRoom { room });
                             }
                         }
                     },
-                    ServerRequest::PrivMsg { user, content, id } => {
-                        let handle = client_handles.get(&id).unwrap();
-                        let sender = ids_map.get(&id).unwrap();
-                        if let Some(receiver_id) = username_map.get(&user) {
-                            let receiver_session = sessions_map.get(&receiver_id).unwrap();
-                            let message = common::Message {
-                                cmd: String::from("incomingmsg"),
-                                arg: None,
-                                sender: sender.to_string(),
-                                id,
-                                content: Some(content.clone()),
-                            };
-
-                            let message = common::pack_message(message);
-                            let _ = receiver_session.mpsc_tx.send(message);
-
-                            let _ = handle.send(ServerResponse::Messaged { user, content });
-                        }
-                        else {
-                            let _ = handle.send(ServerResponse::Failed { error: String::from("User not found") });
+                    ServerRequest::LeaveRoom { room, id } => {
+                        if let Some(client) = server_state.clients.get_mut(&id) {
+                            client.leave_room(room, &room_manager);
                         }
                     },
-                    ServerRequest::ChangeName { new_name, id } => {
-                        let handle = client_handles.get(&id).unwrap();
-                        if username_map.contains_key(&new_name) {
-                            let _ = handle.send(ServerResponse::Failed { error: String::from("Username is already taken") });
+                    ServerRequest::SendTo { room, content, id} => {
+                        if let Some(client) = server_state.clients.get(&id) {
+                            let handle = client.get_handle();
+                            let session = client.get_session();
+                            match session.rooms.get(&room) {
+                                Some((room_handle, _)) => {
+                                     let message = common::Message {
+                                        cmd: String::from("roommessage"),
+                                        arg: Some(room),
+                                        sender: client.get_username(),
+                                        id,
+                                        content: Some(content),
+                                    };
+                                    let message = common::pack_message(message);
+                                    let _ = room_handle.send_message(message);
+                                },
+                                None => {
+                                    let _ = handle.send(ServerResponse::Failed { error: ServerError::NotPartOfRoom.to_string()});
+                                }
+
+                            }
                         }
-                        else {
-                            let session = sessions_map.get_mut(&id).unwrap();
-                            let old_name = session.get_name();
+                    },
+                    ServerRequest::PrivMsg { username, content, id } => {
+                        if let Some(client) = server_state.clients.get(&id) {
+                            let handle = client.get_handle();
+                            let sender = client.get_username();
+                            if let Some(receiver_id) = server_state.get_user_id(&username) {
+                                let receiver = server_state.clients.get(&receiver_id).unwrap();
+                                let receiver_session = receiver.get_session();
+                                let message = common::Message {
+                                    cmd: String::from("incomingmsg"),
+                                    arg: None,
+                                    sender: sender.to_string(),
+                                    id,
+                                    content: Some(content.clone()),
+                                };
 
-                            // Update data structures
-                            username_map.remove(&old_name);
-                            username_map.insert(new_name.clone(), id);
-                            *ids_map.get_mut(&id).unwrap() = new_name.clone();
-                            session.set_name(new_name.clone());
+                                let message = common::pack_message(message);
+                                let _ = receiver_session.mpsc_tx.send(message);
 
-                            let _ = handle.send(ServerResponse::NameChanged { new_name, old_name });
+                                let _ = handle.send(ServerResponse::Messaged {username, content });
+                            }
+                            else {
+                                let _ = handle.send(ServerResponse::Failed { error: ServerError::UserNotFound.to_string()});
+                            }
+
+                        }
+                    },
+                    ServerRequest::ChangeName { new_username, id } => {
+                        match server_state.change_username(id, new_username.clone()) {
+                            Ok(()) => {
+                                let client = server_state.clients.get_mut(&id).unwrap();
+                                client.set_username(new_username);
+                            }
+                            Err(_) => {},
                         }
 
                     },
                     ServerRequest::DropSession { id } => {
-                        // When register call fails info is not stored
-                        if ids_map.contains_key(&id) {
-                            let user = ids_map.get(&id).unwrap();
-                            let user = user.clone();
-                            ids_map.remove(&id);
-                            username_map.remove(&user);
-                            sessions_map.remove(&id);
-                            client_handles.remove(&id);
+                        if let Some(_) = server_state.clients.get(&id) {
+                            server_state.drop_client(id);
                         }
-
-                        let abort_handle = abort_handles.get(&id).unwrap();
-                        abort_handle.abort();
                     },
                 }
             },

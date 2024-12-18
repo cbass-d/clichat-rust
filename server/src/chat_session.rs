@@ -8,7 +8,6 @@ use tokio::{
 use super::room::UserHandle;
 
 pub struct ChatSession {
-    name: String,
     pub rooms: HashMap<String, (UserHandle, AbortHandle)>,
     pub room_task_set: JoinSet<()>, // Threads for receivng room messages
     pub mpsc_tx: mpsc::UnboundedSender<String>,
@@ -21,20 +20,11 @@ impl ChatSession {
         (
             ChatSession {
                 rooms: HashMap::new(),
-                name: String::new(),
                 room_task_set: JoinSet::new(),
                 mpsc_tx,
             },
             mpsc_rx,
         )
-    }
-
-    pub fn set_name(&mut self, name: String) {
-        self.name = name;
-    }
-
-    pub fn get_name(&self) -> String {
-        self.name.clone()
     }
 
     pub fn leave_room(&mut self, room: String) -> Result<()> {

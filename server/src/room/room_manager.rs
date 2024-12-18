@@ -27,14 +27,14 @@ impl RoomManager {
     pub async fn join(
         &self,
         name: &str,
-        user: &str,
+        username: &str,
     ) -> Option<(broadcast::Receiver<String>, UserHandle)> {
         let room = self.rooms.get(name);
 
         match room {
             Some(room) => {
                 let mut room = room.lock().unwrap();
-                let (broadcast_rx, user_handle) = room.join(user.to_owned());
+                let (broadcast_rx, user_handle) = room.join(username.to_owned());
                 Some((broadcast_rx, user_handle))
             }
             None => {
