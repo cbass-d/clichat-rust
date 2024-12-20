@@ -11,7 +11,7 @@ use tokio::{
 
 use client::{
     state_handler::{action::Action, StateHandler},
-    ClientError, ClientState, ConnectionStatus, MessageError,
+    ClientError, ClientState, ConnectionStatus,
 };
 use common::{self};
 use tui::{
@@ -86,6 +86,7 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                                         _ => {},
                                     },
                                 }
+                                buf.clear();
                             },
                             Ok(_) => {
                                 let notification = String::from("[-] Connection closed by server");
@@ -97,7 +98,6 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                         }
 
                         update = true;
-                        buf.clear();
                     },
                     action = action_rx.recv() => {
                         match action.unwrap() {
@@ -310,7 +310,7 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                         Event::Tick => {},
                         Event::Error => {},
                     }
-                }
+                },
                 state = state_rx.recv() => {
                     match state {
                         Some(state) => {
@@ -319,7 +319,7 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                         }
                         None => {},
                     }
-                }
+                },
                 _ = shutdown_rx_tui.recv() => {
                     break;
                 }

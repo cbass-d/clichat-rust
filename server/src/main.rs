@@ -245,6 +245,7 @@ async fn main() -> Result<()> {
             return Err(anyhow!(ServerError::FailedToStart).context(e));
         }
     };
+
     let mut server_state = ServerState::default();
 
     // Broadcst channel to handle shut down of server
@@ -308,7 +309,7 @@ async fn main() -> Result<()> {
                         match server_state.register(id, username.clone()) {
                             Ok(()) => {
                                 let client = server_state.clients.get_mut(&id).unwrap();
-                                client.set_username(username);
+                                client.username = username;
                             },
                             Err(_) => {},
                         };
@@ -320,7 +321,6 @@ async fn main() -> Result<()> {
                     },
                     ServerRequest::List { opt, id } => {
                         if let Some(client) = server_state.clients.get(&id) {
-                            let handle = client.get_handle();
                             let mut content = String::new();
                             match opt.as_str() {
                                 "users" => {
@@ -328,7 +328,7 @@ async fn main() -> Result<()> {
                                     content = users;
                                 }
                                 "rooms" => {
-                                    let session = client.get_session();
+                                    let session = &client.session;
                                     let user_rooms: String = session.rooms.clone().into_keys().map(|s| s.to_string()).collect::<Vec<String>>().join(",");
                                     content = user_rooms;
                                 }
@@ -340,20 +340,19 @@ async fn main() -> Result<()> {
                                 _ => {},
                             }
 
-                            let _ = handle.send(ServerResponse::Listing { opt, content });
+                            let _ = client.handle.send(ServerResponse::Listing { opt, content });
                         }
                     },
                     ServerRequest::CreateRoom { room, id } => {
                         if let Some(client) = server_state.clients.get(&id) {
-                            let handle = client.get_handle();
                             if room_manager.rooms.contains_key(&room) {
-                                let _ = handle.send(ServerResponse::Failed { error: ServerError::RoomAlreadyExists.to_string()});
+                                let _ = client.handle.send(ServerResponse::Failed { error: ServerError::RoomAlreadyExists.to_string()});
                             }
                             else {
                                 let new_room = Arc::new(Mutex::new(Room::new(&room)));
                                 room_manager.add_room(new_room, room.clone());
 
-                                let _ = handle.send(ServerResponse::CreatedRoom { room });
+                                let _ = client.handle.send(ServerResponse::CreatedRoom { room });
                             }
                         }
                     },
@@ -364,14 +363,13 @@ async fn main() -> Result<()> {
                     },
                     ServerRequest::SendTo { room, content, id} => {
                         if let Some(client) = server_state.clients.get(&id) {
-                            let handle = client.get_handle();
-                            let session = client.get_session();
+                            let session = &client.session;
                             match session.rooms.get(&room) {
                                 Some((room_handle, _)) => {
                                      let message = common::Message {
                                         cmd: String::from("roommessage"),
                                         arg: Some(room),
-                                        sender: client.get_username(),
+                                        sender: client.username.clone(),
                                         id,
                                         content: Some(content),
                                     };
@@ -379,7 +377,7 @@ async fn main() -> Result<()> {
                                     let _ = room_handle.send_message(message);
                                 },
                                 None => {
-                                    let _ = handle.send(ServerResponse::Failed { error: ServerError::NotPartOfRoom.to_string()});
+                                    let _ = client.handle.send(ServerResponse::Failed { error: ServerError::NotPartOfRoom.to_string()});
                                 }
 
                             }
@@ -387,11 +385,10 @@ async fn main() -> Result<()> {
                     },
                     ServerRequest::PrivMsg { username, content, id } => {
                         if let Some(client) = server_state.clients.get(&id) {
-                            let handle = client.get_handle();
-                            let sender = client.get_username();
+                            let sender = client.username.clone();
                             if let Some(receiver_id) = server_state.get_user_id(&username) {
                                 let receiver = server_state.clients.get(&receiver_id).unwrap();
-                                let receiver_session = receiver.get_session();
+                                let receiver_session = &receiver.session;
                                 let message = common::Message {
                                     cmd: String::from("incomingmsg"),
                                     arg: None,
@@ -403,10 +400,10 @@ async fn main() -> Result<()> {
                                 let message = common::pack_message(message);
                                 let _ = receiver_session.mpsc_tx.send(message);
 
-                                let _ = handle.send(ServerResponse::Messaged {username, content });
+                                let _ = client.handle.send(ServerResponse::Messaged {username, content });
                             }
                             else {
-                                let _ = handle.send(ServerResponse::Failed { error: ServerError::UserNotFound.to_string()});
+                                let _ = client.handle.send(ServerResponse::Failed { error: ServerError::UserNotFound.to_string()});
                             }
 
                         }
@@ -415,7 +412,7 @@ async fn main() -> Result<()> {
                         match server_state.change_username(id, new_username.clone()) {
                             Ok(()) => {
                                 let client = server_state.clients.get_mut(&id).unwrap();
-                                client.set_username(new_username);
+                                client.username = new_username;
                             }
                             Err(_) => {},
                         }

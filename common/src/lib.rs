@@ -1,3 +1,4 @@
+#[derive(Debug, PartialEq)]
 pub struct Message {
     pub cmd: String,
     pub arg: Option<String>,

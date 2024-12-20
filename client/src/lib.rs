@@ -1,10 +1,7 @@
 pub mod state_handler;
 
 use anyhow::{anyhow, Result};
-use tokio::net::{
-    tcp::{OwnedReadHalf, OwnedWriteHalf},
-    TcpStream,
-};
+use tokio::net::tcp::{OwnedReadHalf, OwnedWriteHalf};
 
 #[derive(Clone)]
 pub enum ConnectionStatus {

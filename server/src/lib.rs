@@ -21,10 +21,10 @@ pub enum ClientEnd {
 }
 
 pub struct Client {
-    id: u64,
-    username: String,
-    handle: ClientHandle,
-    session: ChatSession,
+    pub id: u64,
+    pub username: String,
+    pub handle: ClientHandle,
+    pub session: ChatSession,
 }
 
 impl Client {
@@ -42,31 +42,6 @@ impl Client {
             session,
         }
     }
-
-    pub fn get_id(&self) -> u64 {
-        self.id
-    }
-
-    pub fn set_username(&mut self, username: String) {
-        self.username = username;
-    }
-
-    pub fn get_username(&self) -> String {
-        self.username.clone()
-    }
-
-    pub fn get_handle(&self) -> &ClientHandle {
-        &self.handle
-    }
-
-    pub fn get_session(&self) -> &ChatSession {
-        &self.session
-    }
-
-    pub fn get_session_mut(&mut self) -> &mut ChatSession {
-        &mut self.session
-    }
-
     pub async fn join_room(&mut self, room: String, room_manager: &RoomManager) {
         let session = &mut self.session;
         if session.rooms.contains_key(&room) {
@@ -156,24 +131,21 @@ impl ServerState {
     }
 
     pub fn add_new_client(&mut self, client: Client, abort_handle: AbortHandle) {
-        let id = client.get_id();
-
+        let id = client.id;
         self.clients.insert(id, client);
         self.abort_handles.insert(id, abort_handle);
     }
 
     pub fn register(&mut self, id: u64, username: String) -> Result<()> {
         if let Some(client) = self.clients.get(&id) {
-            let handle = client.get_handle();
             if self.username_to_id.contains_key(&username) {
-                let _ = handle.send(ServerResponse::Failed {
+                let _ = client.handle.send(ServerResponse::Failed {
                     error: ServerError::UserNameTaken.to_string(),
                 });
             } else {
                 self.username_to_id.insert(username.clone(), id);
                 let client = self.clients.get(&id).unwrap();
-                let handle = client.get_handle();
-                let _ = handle.send(ServerResponse::Registered { username });
+                let _ = client.handle.send(ServerResponse::Registered { username });
             }
 
             Ok(())
@@ -200,18 +172,17 @@ impl ServerState {
 
     pub fn change_username(&mut self, id: u64, new_username: String) -> Result<()> {
         if let Some(client) = self.clients.get(&id) {
-            let handle = client.get_handle();
             if self.username_to_id.contains_key(&new_username) {
-                let _ = handle.send(ServerResponse::Failed {
+                let _ = client.handle.send(ServerResponse::Failed {
                     error: ServerError::UserNameTaken.to_string(),
                 });
 
                 return Err(anyhow!(ServerError::UserNameTaken));
             } else {
-                let old_username = client.get_username();
+                let old_username = client.username.clone();
                 self.username_to_id.remove(&old_username);
                 self.username_to_id.insert(new_username.clone(), id);
-                let _ = handle.send(ServerResponse::NameChanged {
+                let _ = client.handle.send(ServerResponse::NameChanged {
                     new_username,
                     old_username,
                 });
@@ -227,7 +198,7 @@ impl ServerState {
 
         let client = self.clients.get(&id).unwrap();
 
-        self.username_to_id.remove(&client.get_username());
+        self.username_to_id.remove(&client.username);
         self.clients.remove(&id);
     }
 }
