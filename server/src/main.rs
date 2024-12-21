@@ -243,8 +243,13 @@ async fn handle_client(
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Set RUST_LOG
-    std::env::set_var("RUST_LOG", "info");
+    // Set RUST_LOG if not already set
+    match std::env::var("RUST_LOG") {
+        Ok(_) => {}
+        Err(_) => {
+            std::env::set_var("RUST_LOG", "info");
+        }
+    };
     env_logger::init();
 
     // Get server config from cli arguments
