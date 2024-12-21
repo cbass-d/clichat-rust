@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use clap::Parser;
 use log::{error, info};
 use std::{
     io,
@@ -22,15 +23,20 @@ use server::chat_session::ChatSession;
 use server::room::{room_manager::RoomManager, Room};
 use server::{Client, ClientEnd, ServerError, ServerRequest, ServerResponse, ServerState};
 
-const SERVER_PORT: &str = "6667";
+#[derive(Parser, Debug)]
+struct ServerConfig {
+    // Port to listening on
+    #[arg(short, long)]
+    port: u16,
+}
 
 fn split_stream(stream: TcpStream) -> (OwnedReadHalf, OwnedWriteHalf) {
     let (reader, writer) = stream.into_split();
     (reader, writer)
 }
 
-async fn startup_server() -> Result<TcpListener, std::io::Error> {
-    let addr = format!("0.0.0.0:{SERVER_PORT}");
+async fn startup_server(port: u16) -> Result<TcpListener, std::io::Error> {
+    let addr = format!("0.0.0.0:{port}");
     let listener = TcpListener::bind(addr).await?;
     return Ok(listener);
 }
@@ -241,8 +247,11 @@ async fn main() -> Result<()> {
     std::env::set_var("RUST_LOG", "info");
     env_logger::init();
 
+    // Get server config from cli arguments
+    let config = ServerConfig::parse();
+
     info!("[+] Starting listener...");
-    let listener = match startup_server().await {
+    let listener = match startup_server(config.port).await {
         Ok(listener) => listener,
         Err(e) => {
             let e = e.to_string();
@@ -266,7 +275,7 @@ async fn main() -> Result<()> {
     let mut room_manager = RoomManager::new(default_rooms);
 
     info!("[+] Server started");
-    info!("[+] Listening at port {0}", SERVER_PORT);
+    info!("[+] Listening at port {0}", config.port);
 
     // Main accept/request handler loop
     // Sources of events:
