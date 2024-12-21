@@ -96,7 +96,6 @@ fn unpacking() {
     );
 
     let third_set_no_content = "!#users#server#0#jon,jack,peter#!";
-
     let unpacked = common::unpack_message(third_set_no_content).unwrap();
     assert_eq!(
         unpacked,

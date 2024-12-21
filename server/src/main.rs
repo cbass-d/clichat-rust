@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use log::{error, info};
 use std::{
     io,
     sync::{Arc, Mutex},
@@ -101,7 +102,7 @@ async fn handle_client(
                             last_command = message.cmd;
                         }
                         else {
-                            println!("[-] Invalid message received");
+                            info!("[-] Invalid message received");
                         }
                     },
                     Ok(_) => {
@@ -236,12 +237,16 @@ async fn handle_client(
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    println!("[+] Starting listener...");
+    // Set RUST_LOG
+    std::env::set_var("RUST_LOG", "info");
+    env_logger::init();
+
+    info!("[+] Starting listener...");
     let listener = match startup_server().await {
         Ok(listener) => listener,
         Err(e) => {
             let e = e.to_string();
-            eprintln!("[-] Failed to start server");
+            error!("[-] Failed to start server");
             return Err(anyhow!(ServerError::FailedToStart).context(e));
         }
     };
@@ -260,7 +265,8 @@ async fn main() -> Result<()> {
     let default_rooms: Vec<Arc<Mutex<Room>>> = vec![Arc::new(Mutex::new(main_room))];
     let mut room_manager = RoomManager::new(default_rooms);
 
-    println!("[+] Server started\n[+] Listening at port {0}", SERVER_PORT);
+    info!("[+] Server started");
+    info!("[+] Listening at port {0}", SERVER_PORT);
 
     // Main accept/request handler loop
     // Sources of events:
@@ -271,15 +277,16 @@ async fn main() -> Result<()> {
         tokio::select! {
             _ = signal::ctrl_c() => {
                 let _ = server_shutdown_tx.send(ClientEnd::ServerClose);
+                info!("[*] Shutting down server...");
                 break;
             },
             res = server_state.connections.join_next() => {
                 match res {
                     Some(Ok(_)) => {
-                        println!("[-] Client closed");
+                        info!("[-] Client closed");
                     }
                     Some(Err(_)) => {
-                        println!("[-] Client crashed");
+                        info!("[-] Client crashed");
                     }
                     _ => {},
                 }
@@ -302,6 +309,8 @@ async fn main() -> Result<()> {
                 ));
 
                 server_state.add_new_client(client, abort_handle);
+
+                info!("[+] New client connected");
             },
             request = request_rx.recv() => {
                 match request.unwrap() {
@@ -309,10 +318,12 @@ async fn main() -> Result<()> {
                         match server_state.register(id, username.clone()) {
                             Ok(()) => {
                                 let client = server_state.clients.get_mut(&id).unwrap();
-                                client.username = username;
+                                client.username = username.clone();
                             },
                             Err(_) => {},
                         };
+
+                        info!("[+] Client #{} registered as \"{}\"", id, username);
                     },
                     ServerRequest::JoinRoom {room, id} => {
                         if let Some(client) = server_state.clients.get_mut(&id) {
@@ -352,7 +363,9 @@ async fn main() -> Result<()> {
                                 let new_room = Arc::new(Mutex::new(Room::new(&room)));
                                 room_manager.add_room(new_room, room.clone());
 
-                                let _ = client.handle.send(ServerResponse::CreatedRoom { room });
+                                let _ = client.handle.send(ServerResponse::CreatedRoom { room: room.clone() });
+
+                                info!("[+] New {} room created by client #{}", room, id);
                             }
                         }
                     },
@@ -412,7 +425,10 @@ async fn main() -> Result<()> {
                         match server_state.change_username(id, new_username.clone()) {
                             Ok(()) => {
                                 let client = server_state.clients.get_mut(&id).unwrap();
-                                client.username = new_username;
+                                let old_username = client.username.clone();
+                                client.username = new_username.clone();
+
+                                info!("[+] Client #{} changed name from \"{}\" to \"{}\"", id, old_username, new_username);
                             }
                             Err(_) => {},
                         }
@@ -421,12 +437,16 @@ async fn main() -> Result<()> {
                     ServerRequest::DropSession { id } => {
                         if let Some(_) = server_state.clients.get(&id) {
                             server_state.drop_client(id);
+
+                            info!("[+] Dropped session");
                         }
                     },
                 }
             },
         }
     }
+
+    info!("[+] Server shut down");
 
     Ok(())
 }
