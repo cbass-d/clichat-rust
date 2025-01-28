@@ -1,0 +1,12 @@
+[package]
+name = "chatserver"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1.41.1", features = ["full"] }
+common = {path = "../common"}
+anyhow = "1.0.94"
+env_logger = "0.11.6"
+log = "0.4.22"
+clap = { version = "4.5.23", features = ["derive"] }
