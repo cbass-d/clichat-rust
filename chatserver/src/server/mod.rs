@@ -461,6 +461,13 @@ pub async fn handle_session(
             session_message = session_rx.recv() => {
                 match session_message {
                     Some(message) => {
+
+                        // Add small delay for sending message
+                        // When server sends two messages rapidly one of the messsages gets lost on
+                        // the client side
+                        // TODO: Find a better solution to this problem
+                        std::thread::sleep(std::time::Duration::from_millis(3));
+
                         let _ = client_connection.write(message).await;
                     },
                     None => {},
@@ -747,12 +754,12 @@ pub async fn handle_session(
                                             arg: Some(room),
                                             content: Some(content),
                                         };
-                                        let _message = Message {
+                                        let message = Message {
                                             header,
                                             body,
                                         };
 
-                                        // let _ = client_connection.write(message).await;
+                                        let _ = client_connection.write(message).await;
                                     },
                                     ServerReply::Failed { error } => {
                                         let header = MessageHeader {

@@ -56,7 +56,6 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                 let _ = shutdown_tx.send(Terminate::Exit);
             }
 
-            // If a server connection exists
             if let Some(connection) = connection_handle.as_mut() {
                 // Three sources of events:
                 // * Server Tcp stream
@@ -67,12 +66,12 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                     read_result = connection.read() => {
                         match read_result {
                             Ok(message) => {
-                                state.push_notification(format!("{:?}", message));
 
                                 // Certain errors need the connection to be closed
                                 let _ = state.handle_message(message).map_err(|_| {
                                     connection_handle = None;
                                 });
+
                             },
                             Err(e) if e.kind() == io::ErrorKind::WouldBlock => {},
                             Err(_) => {
