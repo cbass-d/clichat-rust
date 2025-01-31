@@ -16,8 +16,8 @@ pub enum Action {
 pub fn parse_command(string: String) -> Option<Action> {
     let mut tokens = string.split_whitespace();
     if let Some(cmd) = tokens.next() {
-        if cmd.starts_with('/') {
-            let cmd_name = &cmd[1..];
+        if let Some(stripped) = cmd.strip_prefix('/') {
+            let cmd_name = stripped;
 
             match cmd_name {
                 "help" => {
@@ -56,9 +56,10 @@ pub fn parse_command(string: String) -> Option<Action> {
                     }
                     message = message.trim().to_string();
 
-                    if message == "" {
+                    if message.is_empty() {
                         return None;
                     }
+
                     return Some(Action::SendTo { room, message });
                 }
                 "privmsg" => {
@@ -75,9 +76,10 @@ pub fn parse_command(string: String) -> Option<Action> {
                     }
                     message = message.trim().to_string();
 
-                    if message == "" {
+                    if message.is_empty() {
                         return None;
                     }
+
                     return Some(Action::PrivMsg { user, message });
                 }
                 "list" => {
@@ -131,5 +133,5 @@ pub fn parse_command(string: String) -> Option<Action> {
         }
     }
 
-    return None;
+    None
 }

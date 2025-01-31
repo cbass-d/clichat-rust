@@ -21,24 +21,23 @@ pub struct ClientState {
 
 impl Default for ClientState {
     fn default() -> ClientState {
-        let mut startup_notifications = vec![];
-        startup_notifications.push(TextType::Notification {
-            text: String::from("---- To quit use /quit ----"),
-        });
-
-        startup_notifications.push(TextType::Notification {
-            text: String::from("[*] No nickname set. To set one use the \"/name\" command"),
-        });
-
-        startup_notifications.push(TextType::Notification {
-            text: String::from("[*] To see list of available commands use /help"),
-        });
+        let startup_notifications = vec![
+            TextType::Notification {
+                text: String::from("---- To quit use /quit ----"),
+            },
+            TextType::Notification {
+                text: String::from("[*] No nickname set. To set one use the \"/name\" command"),
+            },
+            TextType::Notification {
+                text: String::from("[*] To see list of available commands use /help"),
+            },
+        ];
 
         ClientState {
             connection_status: ConnectionStatus::Unitiliazed,
             current_server: String::new(),
             username: String::new(),
-            session_id: std::u64::MAX,
+            session_id: u64::MAX,
             notifications: startup_notifications,
             exit: false,
         }
@@ -204,9 +203,7 @@ impl ClientState {
             }
             MessageType::IncomingMsg => {
                 let content = body.content.unwrap();
-                self.push_notification(TextType::PrivateMessage {
-                    text: format!("{content}"),
-                });
+                self.push_notification(TextType::PrivateMessage { text: content });
             }
             MessageType::OutgoingMsg => {
                 let receiver = body.arg.unwrap();

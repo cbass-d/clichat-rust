@@ -58,13 +58,10 @@ impl EventHandler {
                     maybe_event = crossterm_event => {
                         match maybe_event {
                             Some(Ok(event)) => {
-                                match event {
-                                    crossterm::event::Event::Key(key) => {
-                                        if key.kind == crossterm::event::KeyEventKind::Press {
-                                            tx.send(Event::Key(key)).unwrap();
-                                        }
-                                    },
-                                    _ => {},
+                                if let crossterm::event::Event::Key(key) = event {
+                                    if key.kind == crossterm::event::KeyEventKind::Press {
+                                        tx.send(Event::Key(key)).unwrap();
+                                    }
                                 }
                             }
                             Some(Err(_)) => {

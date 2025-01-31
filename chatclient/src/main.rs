@@ -29,7 +29,7 @@ enum Terminate {
 
 pub async fn establish_connection(server: &str) -> Result<TcpStream> {
     let stream = TcpStream::connect(server).await?;
-    return Ok(stream);
+    Ok(stream)
 }
 
 pub fn display_help(state: &mut ClientState) {
@@ -377,12 +377,9 @@ async fn run(
                     }
                 },
                 state = state_rx.recv() => {
-                    match state {
-                        Some(state) => {
-                            let _ = terminal.clear();
-                            app_router = app_router.update(&state);
-                        }
-                        None => {},
+                    if let Some(state) = state {
+                        let _ = terminal.clear();
+                        app_router = app_router.update(&state);
                     }
                 },
                 _ = shutdown_tui.recv() => {

@@ -285,7 +285,7 @@ impl Server {
                                 match session.join_room(&room, &self.room_manager).await {
                                     Ok(()) => {
                                         let reply = ServerReply::Joined {
-                                            room: room,
+                                            room,
                                         };
 
                                         let _ = reply_tx.send(reply);
@@ -315,7 +315,7 @@ impl Server {
                                 match session.leave_room(&room) {
                                     Ok(()) => {
                                         let reply = ServerReply::LeftRoom{
-                                            room: room,
+                                            room,
                                         };
 
                                         let _ = reply_tx.send(reply);
@@ -445,18 +445,15 @@ pub async fn handle_session(
         tokio::select! {
             _ = shutdown_rx.recv() => break,
             session_message = session_rx.recv() => {
-                match session_message {
-                    Some(message) => {
+                if let Some(message) = session_message {
 
-                        // Add small delay for sending message
-                        // When server sends two messages rapidly one of the messsages gets lost on
-                        // the client side
-                        // TODO: Find a better solution to this problem
-                        std::thread::sleep(std::time::Duration::from_millis(3));
+                    // Add small delay for sending message
+                    // When server sends two messages rapidly one of the messsages gets lost on
+                    // the client side
+                    // TODO: Find a better solution to this problem
+                    std::thread::sleep(std::time::Duration::from_millis(3));
 
-                        let _ = client_connection.write(message).await;
-                    },
-                    None => {},
+                    let _ = client_connection.write(message).await;
                 }
             },
             read_result = client_connection.read() => {

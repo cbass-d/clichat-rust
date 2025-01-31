@@ -39,6 +39,6 @@ impl RoomManager {
     }
 
     pub fn get_rooms(&self) -> HashSet<String> {
-        HashSet::from_iter(self.rooms.clone().into_keys().into_iter())
+        HashSet::from_iter(self.rooms.clone().into_keys())
     }
 }

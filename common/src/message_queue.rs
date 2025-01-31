@@ -5,6 +5,12 @@ pub struct MessageQueue<T: Clone> {
     deque: Mutex<VecDeque<T>>,
 }
 
+impl<T: Clone> Default for MessageQueue<T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T: Clone> MessageQueue<T> {
     pub fn new() -> Self {
         Self {

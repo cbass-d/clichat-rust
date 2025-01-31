@@ -42,7 +42,7 @@ impl Component for Primary {
 impl ComponentRender<RenderProps> for Primary {
     fn render(&self, frame: &mut Frame, props: RenderProps) {
         let title = match self.title.is_empty() {
-            true => format!("CLI CHAT RUST"),
+            true => String::from("CLI CHAT RUST"),
             false => self.title.clone(),
         };
 
