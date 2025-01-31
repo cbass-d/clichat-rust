@@ -5,14 +5,13 @@ This project was used as a tool to learn Async programming, networking programmi
 ### Client
 Client can be ran/built from root folder ('clichat_rust') using:
 ```
-$ cargo run --bin client
-$ cargo build --bin client
+$ cargo run --bin chatclient
+$ cargo build --bin chatclient
 ```
 
 ### Server
 Server can be ran/built from root folder ('clichat_rust') using:
 ```
-$ cargo run --bin server
-$ cargo build --bin server
+$ cargo run --bin chatserver -- -p {port}
+$ cargo build --bin chatserver
 ```
-Default listening port is 6667
