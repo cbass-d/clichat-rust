@@ -1,4 +1,5 @@
 pub enum Action {
+    Help,
     Connect { addr: String },
     SetName { name: String },
     Disconnect,
@@ -19,6 +20,9 @@ pub fn parse_command(string: String) -> Option<Action> {
             let cmd_name = &cmd[1..];
 
             match cmd_name {
+                "help" => {
+                    return Some(Action::Help);
+                }
                 "name" => {
                     let name = match tokens.next() {
                         Some(name) => name.to_string(),

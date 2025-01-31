@@ -130,7 +130,7 @@ impl Component for InputBox {
 impl ComponentRender<RenderProps> for InputBox {
     fn render(&self, frame: &mut Frame, props: RenderProps) {
         let input = Paragraph::new(self.input.as_str())
-            .style(Style::default().fg(Color::Green))
+            .style(Style::default().fg(Color::White))
             .block(
                 Block::default()
                     .title(self.prompt.clone())

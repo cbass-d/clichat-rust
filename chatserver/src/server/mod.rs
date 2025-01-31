@@ -2,7 +2,7 @@ mod client_connection;
 mod session;
 
 pub use client_connection::ClientConnection;
-use common::message::{Message, MessageBody, MessageHeader, MessageType};
+use common::message::{Message, MessageType};
 pub use session::Session;
 
 use crate::room::{room_manager::RoomManager, Room};
@@ -10,7 +10,10 @@ use anyhow::Result;
 use log::{error, info};
 use std::collections::HashMap;
 use std::io;
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc, Mutex,
+};
 use tokio::{
     net::TcpListener,
     sync::{
@@ -98,7 +101,7 @@ pub enum ServerReply {
 type SessionHandle = mpsc::UnboundedSender<Message>;
 
 pub struct Server {
-    next_client_id: u64,
+    next_client_id: AtomicU64,
     port: u64,
     username_to_id: HashMap<String, u64>,
     id_to_username: HashMap<u64, String>,
@@ -117,7 +120,7 @@ impl Server {
             mpsc::unbounded_channel::<(ServerEvent, oneshot::Sender<ServerReply>)>();
 
         Self {
-            next_client_id: 1,
+            next_client_id: AtomicU64::new(1),
             port,
             username_to_id: HashMap::new(),
             id_to_username: HashMap::new(),
@@ -150,8 +153,7 @@ impl Server {
                         self.session_tasks.spawn({
                             let to_server_tx = self.to_server_tx.clone();
 
-                            let id = self.next_client_id;
-                            self.next_client_id += 1;
+                            let id = self.next_client_id.fetch_add(1, Ordering::Relaxed);
                             let client_connection = ClientConnection::new(stream);
                             let (to_session_tx, session_rx, session) = Session::new();
                             let session_shutdown_rx = shutdown_rx.resubscribe();
@@ -357,20 +359,12 @@ impl Server {
                             if let Some((room_handle, _)) = session.rooms.get(&room) {
                                 let username = &session.username;
 
-                                let header = MessageHeader {
-                                    message_type: MessageType::RoomMessage,
-                                    sender_id: id,
-                                };
-
-                                let body = MessageBody {
-                                    arg: Some(room.clone()),
-                                    content: Some(format!("{username}: {content}")),
-                                };
-
-                                let message = Message {
-                                    header,
-                                    body,
-                                };
+                                let message = Message::build(
+                                        MessageType::RoomMessage,
+                                        id,
+                                        Some(room.clone()),
+                                        Some(format!("{username}: {content}")),
+                                    );
 
                                 let _ = room_handle.send_message(message);
 
@@ -402,20 +396,12 @@ impl Server {
                                 let receiver_id = self.username_to_id[&username];
                                 let (_, receiving_session_tx) = self.sessions.get_mut(&receiver_id).unwrap();
 
-                                let header = MessageHeader {
-                                    sender_id: id,
-                                    message_type: MessageType::IncomingMsg,
-                                };
-
-                                let body = MessageBody {
-                                    arg: None,
-                                    content: Some(format!("from {sender}: {content}")),
-                                };
-
-                                let message = Message {
-                                    header,
-                                    body,
-                                };
+                                let message = Message::build(
+                                        MessageType::IncomingMsg,
+                                        id,
+                                        None,
+                                        Some(format!("from {sender}: {content}")),
+                                    );
 
                                 let _ = receiving_session_tx.send(message);
 
@@ -493,34 +479,22 @@ pub async fn handle_session(
 
                                 match server_reply {
                                     ServerReply::Registered { username } => {
-                                        let header = MessageHeader {
-                                            message_type: MessageType::Registered,
-                                            sender_id: 0,
-                                        };
-                                        let body = MessageBody {
-                                            arg: Some(session_id.to_string()),
-                                            content: Some(username),
-                                        };
-                                        let message = Message {
-                                            header,
-                                            body,
-                                        };
+                                        let message = Message::build(
+                                                MessageType::Registered,
+                                                0,
+                                                Some(session_id.to_string()),
+                                                Some(username),
+                                            );
 
                                         let _ = client_connection.write(message).await;
                                     },
                                     ServerReply::Failed { error } => {
-                                        let header = MessageHeader {
-                                            message_type: MessageType::Failed,
-                                            sender_id: 0,
-                                        };
-                                        let body = MessageBody {
-                                            arg: Some(String::from("register")),
-                                            content: Some(error),
-                                        };
-                                        let message = Message {
-                                            header,
-                                            body,
-                                        };
+                                        let message = Message::build(
+                                                MessageType::Failed,
+                                                0,
+                                                Some(String::from("register")),
+                                                Some(error),
+                                            );
 
                                         let _ = client_connection.write(message).await;
                                     },
@@ -542,34 +516,22 @@ pub async fn handle_session(
 
                                 match server_reply {
                                     ServerReply::NameChanged { new_username, old_username } => {
-                                        let header = MessageHeader {
-                                            message_type: MessageType::ChangedName,
-                                            sender_id: 0,
-                                        };
-                                        let body = MessageBody {
-                                            arg: Some(new_username),
-                                            content: Some(old_username),
-                                        };
-                                        let message = Message {
-                                            header,
-                                            body,
-                                        };
+                                        let message = Message::build(
+                                                MessageType::ChangedName,
+                                                0,
+                                                Some(new_username),
+                                                Some(old_username),
+                                            );
 
                                         let _ = client_connection.write(message).await;
                                     },
                                     ServerReply::Failed { error } => {
-                                        let header = MessageHeader {
-                                            message_type: MessageType::Failed,
-                                            sender_id: 0,
-                                        };
-                                        let body = MessageBody {
-                                            arg: Some(String::from("changename")),
-                                            content: Some(error),
-                                        };
-                                        let message = Message {
-                                            header,
-                                            body,
-                                        };
+                                        let message = Message::build(
+                                                MessageType::Failed,
+                                                0,
+                                                Some(String::from("changename")),
+                                                Some(error),
+                                            );
 
                                         let _ = client_connection.write(message).await;
                                     },
@@ -592,34 +554,22 @@ pub async fn handle_session(
 
                                 match server_reply {
                                     ServerReply::Joined { room } => {
-                                        let header = MessageHeader {
-                                            message_type: MessageType::Joined,
-                                            sender_id: 0,
-                                        };
-                                        let body = MessageBody {
-                                            arg: Some(room),
-                                            content: None,
-                                        };
-                                        let message = Message {
-                                            header,
-                                            body,
-                                        };
+                                        let message = Message::build(
+                                                MessageType::Joined,
+                                                0,
+                                                Some(room),
+                                                None,
+                                            );
 
                                         let _ = client_connection.write(message).await;
                                     },
                                     ServerReply::Failed { error } => {
-                                        let header = MessageHeader {
-                                            message_type: MessageType::Failed,
-                                            sender_id: 0,
-                                        };
-                                        let body = MessageBody {
-                                            arg: Some(String::from("join")),
-                                            content: Some(error),
-                                        };
-                                        let message = Message {
-                                            header,
-                                            body,
-                                        };
+                                        let message = Message::build(
+                                                MessageType::Failed,
+                                                0,
+                                                Some(String::from("join")),
+                                                Some(error),
+                                            );
 
                                         let _ = client_connection.write(message).await;
                                     },
@@ -643,34 +593,22 @@ pub async fn handle_session(
 
                                 match server_reply {
                                     ServerReply::LeftRoom { room } => {
-                                        let header = MessageHeader {
-                                            message_type: MessageType::LeftRoom,
-                                            sender_id: 0,
-                                        };
-                                        let body = MessageBody {
-                                            arg: Some(room),
-                                            content: None,
-                                        };
-                                        let message = Message {
-                                            header,
-                                            body,
-                                        };
+                                        let message = Message::build(
+                                                MessageType::LeftRoom,
+                                                0,
+                                                Some(room),
+                                                None,
+                                            );
 
                                         let _ = client_connection.write(message).await;
                                     },
                                     ServerReply::Failed { error } => {
-                                        let header = MessageHeader {
-                                            message_type: MessageType::Failed,
-                                            sender_id: 0,
-                                        };
-                                        let body = MessageBody {
-                                            arg: Some(String::from("leave")),
-                                            content: Some(error),
-                                        };
-                                        let message = Message {
-                                            header,
-                                            body,
-                                        };
+                                        let message = Message::build(
+                                                MessageType::Failed,
+                                                0,
+                                                Some(String::from("leave")),
+                                                Some(error),
+                                            );
 
                                         let _ = client_connection.write(message).await;
                                     },
@@ -693,34 +631,22 @@ pub async fn handle_session(
 
                                 match server_reply {
                                     ServerReply::CreatedRoom { room }=> {
-                                        let header = MessageHeader {
-                                            message_type: MessageType::CreatedRoom,
-                                            sender_id: 0,
-                                        };
-                                        let body = MessageBody {
-                                            arg: Some(room),
-                                            content: None,
-                                        };
-                                        let message = Message {
-                                            header,
-                                            body,
-                                        };
+                                        let message = Message::build(
+                                                MessageType::CreatedRoom,
+                                                0,
+                                                Some(room),
+                                                None,
+                                            );
 
                                         let _ = client_connection.write(message).await;
                                     },
                                     ServerReply::Failed { error } => {
-                                        let header = MessageHeader {
-                                            message_type: MessageType::Failed,
-                                            sender_id: 0,
-                                        };
-                                        let body = MessageBody {
-                                            arg: Some(String::from("create")),
-                                            content: Some(error),
-                                        };
-                                        let message = Message {
-                                            header,
-                                            body,
-                                        };
+                                        let message = Message::build(
+                                                MessageType::Failed,
+                                                0,
+                                                Some(String::from("create")),
+                                                Some(error),
+                                            );
 
                                         let _ = client_connection.write(message).await;
                                     },
@@ -746,34 +672,22 @@ pub async fn handle_session(
 
                                 match server_reply {
                                     ServerReply::MessagedRoom => {
-                                        let header = MessageHeader {
-                                            message_type: MessageType::MessagedRoom,
-                                            sender_id: 0,
-                                        };
-                                        let body = MessageBody {
-                                            arg: Some(room),
-                                            content: Some(content),
-                                        };
-                                        let message = Message {
-                                            header,
-                                            body,
-                                        };
+                                        let message = Message::build(
+                                                MessageType::MessagedRoom,
+                                                0,
+                                                Some(room),
+                                                Some(content),
+                                            );
 
                                         let _ = client_connection.write(message).await;
                                     },
                                     ServerReply::Failed { error } => {
-                                        let header = MessageHeader {
-                                            message_type: MessageType::Failed,
-                                            sender_id: 0,
-                                        };
-                                        let body = MessageBody {
-                                            arg: Some(String::from("sendto")),
-                                            content: Some(error),
-                                        };
-                                        let message = Message {
-                                            header,
-                                            body,
-                                        };
+                                        let message = Message::build(
+                                                MessageType::Failed,
+                                                0,
+                                                Some(String::from("sendto")),
+                                                Some(error),
+                                            );
 
                                         let _ = client_connection.write(message).await;
                                     },
@@ -796,66 +710,42 @@ pub async fn handle_session(
 
                                 match server_reply {
                                     ServerReply::ListingUsers { content } => {
-                                        let header = MessageHeader {
-                                            sender_id: 0,
-                                            message_type: MessageType::Users,
-                                        };
-                                        let body = MessageBody {
-                                            arg: None,
-                                            content: Some(content),
-                                        };
-                                        let message = Message {
-                                            header,
-                                            body,
-                                        };
+                                        let message = Message::build(
+                                                MessageType::Users,
+                                                0,
+                                                None,
+                                                Some(content),
+                                            );
 
                                         let _ = client_connection.write(message).await;
                                     },
                                     ServerReply::ListingUserRooms { content } => {
-                                        let header = MessageHeader {
-                                            sender_id: 0,
-                                            message_type: MessageType::UserRooms,
-                                        };
-                                        let body = MessageBody {
-                                            arg: None,
-                                            content: Some(content),
-                                        };
-                                        let message = Message {
-                                            header,
-                                            body,
-                                        };
+                                        let message = Message::build(
+                                                MessageType::UserRooms,
+                                                0,
+                                                None,
+                                                Some(content),
+                                            );
 
                                         let _ = client_connection.write(message).await;
                                     },
                                     ServerReply::ListingRooms { content } => {
-                                        let header = MessageHeader {
-                                            sender_id: 0,
-                                            message_type: MessageType::AllRooms,
-                                        };
-                                        let body = MessageBody {
-                                            arg: None,
-                                            content: Some(content),
-                                        };
-                                        let message = Message {
-                                            header,
-                                            body,
-                                        };
+                                        let message = Message::build(
+                                                MessageType::AllRooms,
+                                                0,
+                                                None,
+                                                Some(content),
+                                            );
 
                                         let _ = client_connection.write(message).await;
                                     },
                                     ServerReply::Failed { error } => {
-                                        let header = MessageHeader {
-                                            message_type: MessageType::Failed,
-                                            sender_id: 0,
-                                        };
-                                        let body = MessageBody {
-                                            arg: Some(String::from("list")),
-                                            content: Some(error),
-                                        };
-                                        let message = Message {
-                                            header,
-                                            body,
-                                        };
+                                        let message = Message::build(
+                                                MessageType::Failed,
+                                                0,
+                                                Some(String::from("list")),
+                                                Some(error),
+                                            );
 
                                         let _ = client_connection.write(message).await;
                                     },
@@ -879,35 +769,23 @@ pub async fn handle_session(
 
                                 match server_reply {
                                     ServerReply::MessagedUser => {
-                                        let header = MessageHeader {
-                                            sender_id: 0,
-                                            message_type: MessageType::OutgoingMsg,
-                                        };
-                                        let body = MessageBody {
-                                            arg: Some(username),
-                                            content: Some(content),
-                                        };
-                                        let message = Message {
-                                            header,
-                                            body,
-                                        };
+                                        let message = Message::build(
+                                                MessageType::OutgoingMsg,
+                                                0,
+                                                Some(username),
+                                                Some(content),
+                                            );
 
                                        let _ = client_connection.write(message).await;
 
                                     },
                                     ServerReply::Failed { error } => {
-                                        let header = MessageHeader {
-                                            message_type: MessageType::Failed,
-                                            sender_id: 0,
-                                        };
-                                        let body = MessageBody {
-                                            arg: Some(String::from("privmsg")),
-                                            content: Some(error),
-                                        };
-                                        let message = Message {
-                                            header,
-                                            body,
-                                        };
+                                        let message = Message::build(
+                                                MessageType::Failed,
+                                                0,
+                                                Some(String::from("privmsg")),
+                                                Some(error),
+                                            );
 
                                         let _ = client_connection.write(message).await;
                                     },

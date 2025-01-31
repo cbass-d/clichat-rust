@@ -54,7 +54,7 @@ impl ComponentRender<()> for MainPage {
             frame,
             RenderProps {
                 area: layout[1],
-                border_color: Color::LightMagenta,
+                border_color: Color::LightBlue,
             },
         );
 
@@ -62,7 +62,7 @@ impl ComponentRender<()> for MainPage {
             frame,
             RenderProps {
                 area: layout[0],
-                border_color: Color::LightMagenta,
+                border_color: Color::LightBlue,
             },
         );
     }

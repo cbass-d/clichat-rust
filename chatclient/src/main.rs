@@ -7,13 +7,13 @@ use std::time::Duration;
 use tokio::{
     io,
     net::TcpStream,
-    sync::broadcast::{Receiver, Sender},
+    sync::broadcast::{self},
 };
 
 use crate::state_handler::{Action, ClientState, ConnectionStatus, StateHandler};
 use connection::Connection;
 
-use common::message::{Message, MessageBody, MessageHeader, MessageType};
+use common::message::{Message, MessageType};
 use tui::{
     app_router::AppRouter,
     components::component::{Component, ComponentRender},
@@ -23,7 +23,6 @@ use tui::{
 #[derive(Clone)]
 enum Terminate {
     Exit,
-    Error,
 }
 
 pub async fn establish_connection(server: &str) -> Result<TcpStream> {
@@ -31,21 +30,51 @@ pub async fn establish_connection(server: &str) -> Result<TcpStream> {
     return Ok(stream);
 }
 
-async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminate>) -> Result<()> {
+pub fn display_help(state: &mut ClientState) {
+    state.push_notification(String::from("List of available commands:"));
+    state.push_notification(String::from("    /name - Set username"));
+    state.push_notification(String::from("    /changename - Change name used in server"));
+    state.push_notification(String::from(
+        "    /connect - Connect to server. ex. 127.0.0.1:6777",
+    ));
+    state.push_notification(String::from(
+        "    /list {opt} - List out info. Options: users, rooms, allrooms",
+    ));
+    state.push_notification(String::from("    /join {room} - Join room in server"));
+    state.push_notification(String::from(
+        "    /leave {room} - Leave from room in server",
+    ));
+    state.push_notification(String::from(
+        "    /create {room} - Create new room in server",
+    ));
+    state.push_notification(String::from(
+        "    /sendto {room} {message}  - Send message to joined room",
+    ));
+    state.push_notification(String::from(
+        "    /privmsg {user} {message} - Send message directly to user",
+    ));
+    state.push_notification(String::from("    /disconnect - Disconnect from server"));
+    state.push_notification(String::from("    /quit - Close chat client"));
+}
+
+async fn run(
+    shutdown_tx: broadcast::Sender<Terminate>,
+    shutdown_rx: &mut broadcast::Receiver<Terminate>,
+) -> Result<()> {
     // Initialize required strucutres:
     // * Channel for passing state between TUI and state handler
     // * Channel for passing actions/input from TUI to state handler
     // * Shutdown channels for TUI and state handler components
     let (state_handler, mut state_rx) = StateHandler::new();
     let (tui, mut action_rx, mut tui_events) = Tui::new();
-    let mut shutdown_rx_state = shutdown_rx.resubscribe();
-    let mut shutdown_rx_tui = shutdown_rx.resubscribe();
+    let mut shutdown_state = shutdown_rx.resubscribe();
+    let mut shutdown_tui = shutdown_rx.resubscribe();
 
     // State Handler
     let state_task = tokio::spawn(async move {
         // Create and send initial state to TUI
         let mut state = ClientState::default();
-        state_handler.state_tx.send(state.clone()).unwrap();
+        state_handler.send_update(state.clone());
 
         let mut ticker = tokio::time::interval(Duration::from_millis(250));
         let mut connection_handle: Option<Connection> = None;
@@ -85,37 +114,31 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                     },
                     action = action_rx.recv() => {
                         match action.unwrap() {
+                            Action::Help => {
+                                    display_help(&mut state);
+                                    update = true;
+                            },
                             Action::SetName { name } => {
-                                let header = MessageHeader {
-                                        message_type: MessageType::ChangeName,
-                                        sender_id: state.session_id,
-                                };
-                                let body = MessageBody {
-                                        arg: Some(name),
-                                        content: None,
-                                };
-                                let message = Message {
-                                        header,
-                                        body,
-                                };
+
+                                let message = Message::build(
+                                        MessageType::ChangeName,
+                                        state.session_id,
+                                        Some(name),
+                                        None
+                                    );
 
                                 state.push_notification("[*] Attemping name change".to_string());
 
                                 let _ = connection.write(message).await;
                             },
                             Action::SendTo { room, message } => {
-                                let header = MessageHeader {
-                                        message_type: MessageType::SendTo,
-                                        sender_id: state.session_id,
-                                };
-                                let body = MessageBody {
-                                        arg: Some(room),
-                                        content: Some(message),
-                                };
-                                let message = Message {
-                                        header,
-                                        body,
-                                };
+
+                                let message = Message::build(
+                                        MessageType::SendTo,
+                                        state.session_id,
+                                        Some(room),
+                                        Some(message),
+                                    );
 
                                 let _ = connection.write(message).await;
                             },
@@ -126,83 +149,58 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                                     update = true;
                                 }
                                 else {
-                                    let header = MessageHeader {
-                                            message_type: MessageType::PrivMsg,
-                                            sender_id: state.session_id,
-                                    };
-                                    let body = MessageBody {
-                                            arg: Some(user),
-                                            content: Some(message),
-                                    };
-                                    let message = Message {
-                                            header,
-                                            body,
-                                    };
+
+                                    let message = Message::build(
+                                            MessageType::PrivMsg,
+                                            state.session_id,
+                                            Some(user),
+                                            Some(message),
+                                        );
 
                                     let _ = connection.write(message).await;
                                 }
                             },
                             Action::Join { room } => {
-                                let header = MessageHeader {
-                                        message_type: MessageType::Join,
-                                        sender_id: state.session_id,
-                                };
-                                let body = MessageBody {
-                                        arg: Some(room),
-                                        content: None,
-                                };
-                                let message = Message {
-                                        header,
-                                        body,
-                                };
+
+                                let message = Message::build(
+                                        MessageType::Join,
+                                        state.session_id,
+                                        Some(room),
+                                        None,
+                                    );
 
                                 let _ = connection.write(message).await;
                             },
                             Action::Leave { room } => {
-                                let header = MessageHeader {
-                                        message_type: MessageType::Leave,
-                                        sender_id: state.session_id,
-                                };
-                                let body = MessageBody {
-                                        arg: Some(room),
-                                        content: None,
-                                };
-                                let message = Message {
-                                        header,
-                                        body,
-                                };
+
+                                let message = Message::build(
+                                        MessageType::Leave,
+                                        state.session_id,
+                                        Some(room),
+                                        None,
+                                    );
 
                                 let _ = connection.write(message).await;
                             },
                             Action::List { opt } => {
-                                let header = MessageHeader {
-                                        message_type: MessageType::List,
-                                        sender_id: state.session_id,
-                                };
-                                let body = MessageBody {
-                                        arg: Some(opt),
-                                        content: None,
-                                };
-                                let message = Message {
-                                        header,
-                                        body,
-                                };
+
+                                let message = Message::build(
+                                        MessageType::List,
+                                        state.session_id,
+                                        Some(opt),
+                                        None,
+                                    );
 
                                 let _ = connection.write(message).await;
                             },
                             Action::Create { room } => {
-                                let header = MessageHeader {
-                                        message_type: MessageType::Create,
-                                        sender_id: state.session_id,
-                                };
-                                let body = MessageBody {
-                                        arg: Some(room),
-                                        content: None,
-                                };
-                                let message = Message {
-                                        header,
-                                        body,
-                                };
+
+                                let message = Message::build(
+                                        MessageType::Create,
+                                        state.session_id,
+                                        Some(room),
+                                        None,
+                                    );
 
                                 let _ = connection.write(message).await;
                             },
@@ -223,7 +221,7 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                             _ => {}
                         }
                     },
-                    _ = shutdown_rx_state.recv() => {
+                    _ = shutdown_state.recv() => {
                         break;
                     }
                 }
@@ -235,6 +233,9 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                     _tick = ticker.tick() => {},
                     action = action_rx.recv() => {
                         match action.unwrap() {
+                            Action::Help => {
+                                display_help(&mut state);
+                            },
                             Action::SetName { name } => {
                                 state.username = name.clone();
                                 state.push_notification(format!("[+] Name set to [{name}]"));
@@ -245,6 +246,7 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                                     update = true;
                                     continue;
                                 }
+
                                 match establish_connection(&addr).await {
                                     Ok(stream) => {
                                         state.current_server = addr;
@@ -256,18 +258,13 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                                         // Once connected, registration message is sent which
                                         // provides username to server
                                         state.push_notification("[*] Registering user".to_string());
-                                        let header = MessageHeader {
-                                            message_type: MessageType::Register,
-                                            sender_id: state.session_id,
-                                        };
-                                        let body = MessageBody {
-                                            arg: Some(state.username.clone()),
-                                            content: None,
-                                        };
-                                        let message = Message {
-                                            header,
-                                            body,
-                                        };
+
+                                        let message = Message::build(
+                                                MessageType::Register,
+                                                state.session_id,
+                                                Some(state.username.clone()),
+                                                None,
+                                            );
 
                                         if let Some(connection) = connection_handle.as_mut() {
                                             let _ = connection.write(message).await;
@@ -299,7 +296,7 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
 
                         update = true;
                     },
-                    _ = shutdown_rx_state.recv() => {
+                    _ = shutdown_state.recv() => {
                             break;
                     }
                 }
@@ -307,12 +304,7 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
 
             // Update state if needed
             if update {
-                match state_handler.state_tx.send(state.clone()) {
-                    Ok(_) => {}
-                    Err(_) => {
-                        let _ = shutdown_tx.send(Terminate::Error);
-                    }
-                }
+                state_handler.send_update(state.clone());
                 update = false;
             }
         }
@@ -351,7 +343,7 @@ async fn run(shutdown_tx: Sender<Terminate>, shutdown_rx: &mut Receiver<Terminat
                         None => {},
                     }
                 },
-                _ = shutdown_rx_tui.recv() => {
+                _ = shutdown_tui.recv() => {
                     break;
                 }
             }
@@ -375,18 +367,16 @@ fn shutdown() {
 #[tokio::main]
 async fn main() -> Result<()> {
     // Create broadcast channel to send shutdown signal to the different components
-    let (shutdown_tx, mut shutdown_rx) = tokio::sync::broadcast::channel::<Terminate>(2);
-    let mut shutdown_rx_main = shutdown_rx.resubscribe();
+    let (shutdown_tx, mut shutdown_rx) = broadcast::channel::<Terminate>(2);
+    let mut shutdown_main = shutdown_rx.resubscribe();
 
-    // Spawn thread for running app
     tokio::spawn(async move {
         let _ = run(shutdown_tx, &mut shutdown_rx).await;
     })
     .await?;
 
-    //  Wait on shutdown signal
     tokio::select! {
-        _ = shutdown_rx_main.recv() => {
+        _ = shutdown_main.recv() => {
             shutdown();
         }
     }

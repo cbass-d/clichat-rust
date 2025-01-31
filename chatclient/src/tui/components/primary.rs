@@ -52,7 +52,7 @@ impl ComponentRender<RenderProps> for Primary {
                 .map(|line| Text::from(line))
                 .collect::<Vec<_>>(),
         )
-        .style(Style::default().fg(Color::Green))
+        .style(Style::default().fg(Color::White))
         .direction(ListDirection::BottomToTop)
         .block(
             Block::default()

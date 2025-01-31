@@ -45,6 +45,21 @@ pub struct Message {
 }
 
 impl Message {
+    pub fn build(
+        message_type: MessageType,
+        sender_id: u64,
+        arg: Option<String>,
+        content: Option<String>,
+    ) -> Self {
+        Self {
+            header: MessageHeader {
+                message_type,
+                sender_id,
+            },
+            body: MessageBody { arg, content },
+        }
+    }
+
     pub fn from_bytes(bytes: Vec<u8>) -> Self {
         from_bytes(&bytes).unwrap()
     }

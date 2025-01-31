@@ -25,23 +25,9 @@ impl Default for ClientState {
         startup_notices
             .push("[*] No nickname set. To set one use the \"/name\" command".to_string());
         startup_notices.push("    Example: /name jon".to_string());
-        startup_notices
-            .push("[*] Not connected to server. To connect use \"/connect\" command".to_string());
-        startup_notices.push("    Example: /connect 127.0.0.1:6667".to_string());
-        startup_notices.push("[*] Server has one default [#main] room".to_string());
-        startup_notices.push("    To join use: /join main".to_string());
-        startup_notices
-            .push("    To send message to server room: /sendto {room} {msg}".to_string());
-        startup_notices.push("    To change name on server use the \"/name\" command".to_string());
-        startup_notices.push("    Username must be unique on server".to_string());
-        startup_notices.push("    To list users: /list users".to_string());
-        startup_notices.push("[*] To list joined rooms: /list rooms".to_string());
-        startup_notices.push("[*] To leave a joinded room: /leave room".to_string());
-        startup_notices.push("[*] To list all rooms on server: /list allrooms".to_string());
-        startup_notices.push("[*] To create a new room: /create ".to_string());
-        startup_notices
-            .push("[*] Private messages can be sent to users using \"/privmsg\"".to_string());
-        startup_notices.push("    Example: /privmsg jon message".to_string());
+        startup_notices.push(String::from(
+            "[*] To see list of available commands use /help",
+        ));
 
         ClientState {
             connection_status: ConnectionStatus::Unitiliazed,
