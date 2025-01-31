@@ -1,6 +1,7 @@
 mod action;
 mod state;
 
+pub use super::tui::TextType;
 pub use action::{parse_command, Action};
 pub use state::{ClientState, ConnectionStatus};
 

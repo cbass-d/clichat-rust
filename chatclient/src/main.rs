@@ -1,3 +1,5 @@
+#![warn(clippy::all)]
+
 mod connection;
 mod state_handler;
 mod tui;
@@ -17,7 +19,7 @@ use common::message::{Message, MessageType};
 use tui::{
     app_router::AppRouter,
     components::component::{Component, ComponentRender},
-    Event, Tui,
+    Event, TextType, Tui,
 };
 
 #[derive(Clone)]
@@ -31,30 +33,42 @@ pub async fn establish_connection(server: &str) -> Result<TcpStream> {
 }
 
 pub fn display_help(state: &mut ClientState) {
-    state.push_notification(String::from("List of available commands:"));
-    state.push_notification(String::from("    /name - Set username"));
-    state.push_notification(String::from("    /changename - Change name used in server"));
-    state.push_notification(String::from(
-        "    /connect - Connect to server. ex. 127.0.0.1:6777",
-    ));
-    state.push_notification(String::from(
-        "    /list {opt} - List out info. Options: users, rooms, allrooms",
-    ));
-    state.push_notification(String::from("    /join {room} - Join room in server"));
-    state.push_notification(String::from(
-        "    /leave {room} - Leave from room in server",
-    ));
-    state.push_notification(String::from(
-        "    /create {room} - Create new room in server",
-    ));
-    state.push_notification(String::from(
-        "    /sendto {room} {message}  - Send message to joined room",
-    ));
-    state.push_notification(String::from(
-        "    /privmsg {user} {message} - Send message directly to user",
-    ));
-    state.push_notification(String::from("    /disconnect - Disconnect from server"));
-    state.push_notification(String::from("    /quit - Close chat client"));
+    state.push_notification(TextType::Notification {
+        text: String::from("List of available commands:"),
+    });
+    state.push_notification(TextType::Listing {
+        text: String::from("    /name - Set username"),
+    });
+    state.push_notification(TextType::Listing {
+        text: String::from("    /changename - Change name used in server"),
+    });
+    state.push_notification(TextType::Listing {
+        text: String::from("    /connect - Connect to server. ex. 127.0.0.1:6777"),
+    });
+    state.push_notification(TextType::Listing {
+        text: String::from("    /list {opt} - List out info. Options: users, rooms, allrooms"),
+    });
+    state.push_notification(TextType::Listing {
+        text: String::from("    /join {room} - Join room in server"),
+    });
+    state.push_notification(TextType::Listing {
+        text: String::from("    /leave {room} - Leave from room in server"),
+    });
+    state.push_notification(TextType::Listing {
+        text: String::from("    /create {room} - Create new room in server"),
+    });
+    state.push_notification(TextType::Listing {
+        text: String::from("    /sendto {room} {message}  - Send message to joined room"),
+    });
+    state.push_notification(TextType::Listing {
+        text: String::from("    /privmsg {user} {message} - Send message directly to user"),
+    });
+    state.push_notification(TextType::Listing {
+        text: String::from("    /disconnect - Disconnect from server"),
+    });
+    state.push_notification(TextType::Listing {
+        text: String::from("    /quit - Close chat client"),
+    });
 }
 
 async fn run(
@@ -104,7 +118,9 @@ async fn run(
                             },
                             Err(e) if e.kind() == io::ErrorKind::WouldBlock => {},
                             Err(_) => {
-                                state.push_notification(String::from("[-] Closed connection to server"));
+                                state.push_notification(TextType::Error {
+                                    text: String::from("[-] Closed connection to server"),
+                                });
                                 state.terminate_connection();
                                 connection_handle = None;
                             },
@@ -127,7 +143,9 @@ async fn run(
                                         None
                                     );
 
-                                state.push_notification("[*] Attemping name change".to_string());
+                                state.push_notification(TextType::Notification {
+                                        text: String::from("[*] Attemping name change")
+                                });
 
                                 let _ = connection.write(message).await;
                             },
@@ -144,7 +162,9 @@ async fn run(
                             },
                             Action::PrivMsg{ user, message } => {
                                 if user == state.username {
-                                    state.push_notification("[-] Cannot send message to yourself".to_string());
+                                    state.push_notification(TextType::Error {
+                                            text: String::from("[-] Cannot send message to yourself"),
+                                    });
 
                                     update = true;
                                 }
@@ -205,7 +225,9 @@ async fn run(
                                 let _ = connection.write(message).await;
                             },
                             Action::Disconnect => {
-                                state.push_notification("[-] Closing connection to server".to_string());
+                                state.push_notification(TextType::Notification {
+                                        text: String::from("[-] Closing connection to server"),
+                                });
                                 state.terminate_connection();
                                 connection_handle = None;
 
@@ -215,7 +237,9 @@ async fn run(
                                 state.exit();
                             },
                             Action::Invalid => {
-                                state.push_notification("[-] Invalid command".to_string());
+                                state.push_notification(TextType::Error {
+                                        text: String::from("[-] Invalid command")
+                                });
                                 update = true;
                             },
                             _ => {}
@@ -238,11 +262,15 @@ async fn run(
                             },
                             Action::SetName { name } => {
                                 state.username = name.clone();
-                                state.push_notification(format!("[+] Name set to [{name}]"));
+                                state.push_notification(TextType::Notification {
+                                    text: format!("[*] Name set to [{name}]"),
+                                });
                             },
                             Action::Connect { addr } => {
                                 if state.username.is_empty() {
-                                    state.push_notification("[-] Must set a name".to_string());
+                                    state.push_notification(TextType::Error {
+                                        text: String::from("[-] Must set a name"),
+                                    });
                                     update = true;
                                     continue;
                                 }
@@ -253,11 +281,15 @@ async fn run(
                                         state.connection_status = ConnectionStatus::Established;
                                         let connection = Connection::new(stream);
                                         let _ = connection_handle.insert(connection);
-                                        state.push_notification("[+] Successfully connected".to_string());
+                                        state.push_notification(TextType::Notification {
+                                            text: String::from("[*] Successfully connected"),
+                                        });
 
                                         // Once connected, registration message is sent which
                                         // provides username to server
-                                        state.push_notification("[*] Registering user".to_string());
+                                        state.push_notification(TextType::Notification {
+                                            text: String::from("[*] Registering user"),
+                                        });
 
                                         let message = Message::build(
                                                 MessageType::Register,
@@ -270,8 +302,12 @@ async fn run(
                                             let _ = connection.write(message).await;
                                         }
                                         else {
-                                            state.push_notification("[-] Failed to get connection handle".to_string());
-                                            state.push_notification("[-] Disconnecting from server".to_string());
+                                            state.push_notification(TextType::Error {
+                                                text: String::from("[-] Failed to get connection handle"),
+                                            });
+                                            state.push_notification(TextType::Error {
+                                                text: String::from("[-] Disconnecting from server"),
+                                            });
                                             state.terminate_connection();
                                             connection_handle = None;
                                             state.connection_status = ConnectionStatus::Unitiliazed;
@@ -279,7 +315,9 @@ async fn run(
                                     },
                                     Err(e) => {
                                         let err = e.to_string();
-                                        state.push_notification("[-] Failed to connect: ".to_string() + &err);
+                                        state.push_notification(TextType::Error {
+                                            text: format!("[-] Failed to connect: {err}"),
+                                        });
                                     },
                                 }
                             },
@@ -287,10 +325,14 @@ async fn run(
                                 state.exit();
                             },
                             Action::Invalid => {
-                                state.push_notification("[-] Invalid command".to_string());
+                                state.push_notification(TextType::Error {
+                                    text: String::from("[-] Invalid command"),
+                                });
                             },
                             _ => {
-                                state.push_notification("[-] Not connected to a server".to_string());
+                                state.push_notification(TextType::Error {
+                                    text: String::from("[-] Not connected to a server")
+                                });
                             }
                         }
 

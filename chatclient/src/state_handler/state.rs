@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
 
+use super::TextType;
 use common::message::{Message, MessageType};
 
 #[derive(Clone)]
@@ -14,34 +15,38 @@ pub struct ClientState {
     pub current_server: String,
     pub username: String,
     pub session_id: u64,
-    pub notifications: Vec<String>,
+    pub notifications: Vec<TextType>,
     pub exit: bool,
 }
 
 impl Default for ClientState {
     fn default() -> ClientState {
-        let mut startup_notices = vec![String::from("---To quit use \"/quit\"---")];
+        let mut startup_notifications = vec![];
+        startup_notifications.push(TextType::Notification {
+            text: String::from("---- To quit use /quit ----"),
+        });
 
-        startup_notices
-            .push("[*] No nickname set. To set one use the \"/name\" command".to_string());
-        startup_notices.push("    Example: /name jon".to_string());
-        startup_notices.push(String::from(
-            "[*] To see list of available commands use /help",
-        ));
+        startup_notifications.push(TextType::Notification {
+            text: String::from("[*] No nickname set. To set one use the \"/name\" command"),
+        });
+
+        startup_notifications.push(TextType::Notification {
+            text: String::from("[*] To see list of available commands use /help"),
+        });
 
         ClientState {
             connection_status: ConnectionStatus::Unitiliazed,
             current_server: String::new(),
             username: String::new(),
             session_id: std::u64::MAX,
-            notifications: startup_notices,
+            notifications: startup_notifications,
             exit: false,
         }
     }
 }
 
 impl ClientState {
-    pub fn push_notification(&mut self, notification: String) {
+    pub fn push_notification(&mut self, notification: TextType) {
         self.notifications.push(notification);
     }
 
@@ -62,12 +67,18 @@ impl ClientState {
             MessageType::Failed => {
                 let failed_cmd = body.arg.unwrap();
                 let error = body.content.unwrap();
-                self.push_notification(format!("[-] {failed_cmd} failed: {error}"));
+
+                self.push_notification(TextType::Error {
+                    text: format!("[-] {failed_cmd} failed: {error}"),
+                });
 
                 match failed_cmd.as_ref() {
                     "register" => {
                         self.terminate_connection();
-                        self.push_notification(String::from("[-] Connection to server closed"));
+
+                        self.push_notification(TextType::Error {
+                            text: String::from("[-] Connection to server closed"),
+                        });
 
                         return Err(anyhow!("Failed registration"));
                     }
@@ -81,7 +92,9 @@ impl ClientState {
                 self.session_id = given_id.parse::<u64>().unwrap();
                 self.username = username.clone();
 
-                self.push_notification(format!("[+] Registered as {username}"));
+                self.push_notification(TextType::Notification {
+                    text: format!("[+] Registered as {username}"),
+                });
             }
             MessageType::ChangedName => {
                 let new_username = body.arg.unwrap();
@@ -89,9 +102,11 @@ impl ClientState {
 
                 self.username = new_username.clone();
 
-                self.push_notification(format!(
-                    "[+] Name changed from \"{old_username}\" to \"{new_username}\""
-                ));
+                self.push_notification(TextType::Notification {
+                    text: format!(
+                        "[+] Name changed from \"{old_username}\" to \"{new_username}\"",
+                    ),
+                });
             }
             MessageType::UserRooms => {
                 let content = body.content.unwrap();
@@ -102,11 +117,19 @@ impl ClientState {
                     rooms.push(content);
                 }
 
-                self.push_notification(String::from("[+] List of joined rooms"));
+                self.push_notification(TextType::Notification {
+                    text: String::from("[+] List of joined rooms"),
+                });
+
                 for room in rooms {
-                    self.push_notification(format!("[{room}]"));
+                    self.push_notification(TextType::Listing {
+                        text: format!("[{room}]"),
+                    });
                 }
-                self.push_notification(String::from("[-] End of list"));
+
+                self.push_notification(TextType::Notification {
+                    text: String::from("[-] End of list"),
+                });
             }
             MessageType::AllRooms => {
                 let content = body.content.unwrap();
@@ -117,11 +140,19 @@ impl ClientState {
                     rooms.push(content);
                 }
 
-                self.push_notification(String::from("[+] List of all rooms"));
+                self.push_notification(TextType::Notification {
+                    text: String::from("[+] List of all rooms"),
+                });
+
                 for room in rooms {
-                    self.push_notification(format!("[{room}]"));
+                    self.push_notification(TextType::Listing {
+                        text: format!("[{room}]"),
+                    });
                 }
-                self.push_notification(String::from("[-] End of list"));
+
+                self.push_notification(TextType::Notification {
+                    text: String::from("[-] End of list"),
+                });
             }
             MessageType::Users => {
                 let content = body.content.unwrap();
@@ -132,37 +163,57 @@ impl ClientState {
                     users.push(content);
                 }
 
-                self.push_notification(String::from("[+] List of users"));
+                self.push_notification(TextType::Notification {
+                    text: String::from("[+] List users"),
+                });
+
                 for user in users {
-                    self.push_notification(format!("[{user}]"));
+                    self.push_notification(TextType::Listing {
+                        text: format!("[{user}]"),
+                    });
                 }
-                self.push_notification(String::from("[-] End of list"));
+
+                self.push_notification(TextType::Notification {
+                    text: String::from("[-] End of list"),
+                });
             }
             MessageType::Joined => {
                 let room = body.arg.unwrap();
-                self.push_notification(format!("[+] Joined [{room}] room"));
+                self.push_notification(TextType::Notification {
+                    text: format!("[+] Joined [{room}] room"),
+                });
             }
             MessageType::LeftRoom => {
                 let room = body.arg.unwrap();
-                self.push_notification(format!("[+] Left [{room}] room"));
+                self.push_notification(TextType::Notification {
+                    text: format!("[+] Left [{room}] room"),
+                });
             }
             MessageType::CreatedRoom => {
                 let room = body.arg.unwrap();
-                self.push_notification(format!("[+] Created [{room}] room"));
+                self.push_notification(TextType::Notification {
+                    text: format!("[+] Created [{room}] room"),
+                });
             }
             MessageType::RoomMessage => {
                 let room = body.arg.unwrap();
                 let content = body.content.unwrap();
-                self.push_notification(format!("[{room}] {content}"));
+                self.push_notification(TextType::RoomMessage {
+                    text: format!("[{room}] {content}"),
+                });
             }
             MessageType::IncomingMsg => {
                 let content = body.content.unwrap();
-                self.push_notification(content);
+                self.push_notification(TextType::PrivateMessage {
+                    text: format!("{content}"),
+                });
             }
             MessageType::OutgoingMsg => {
                 let receiver = body.arg.unwrap();
                 let content = body.content.unwrap();
-                self.push_notification(format!("to {receiver}: {content}"));
+                self.push_notification(TextType::PrivateMessage {
+                    text: format!("to {receiver}: {content}"),
+                });
             }
             _ => {}
         }

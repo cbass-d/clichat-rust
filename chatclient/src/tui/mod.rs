@@ -14,6 +14,17 @@ use ratatui::prelude::*;
 use std::io::{self, Stdout};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
+// Enum used to determine how to stylize the text
+// printed out
+#[derive(Clone)]
+pub enum TextType {
+    Notification { text: String },
+    Error { text: String },
+    RoomMessage { text: String },
+    PrivateMessage { text: String },
+    Listing { text: String },
+}
+
 pub struct Tui {
     pub action_tx: UnboundedSender<Action>,
 }
