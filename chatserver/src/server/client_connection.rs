@@ -31,6 +31,11 @@ impl ClientConnection {
 
         Ok(())
     }
+
+    pub async fn readable(&self) -> Result<(), io::Error> {
+        self.stream_in.readable().await
+    }
+
     pub async fn read(&mut self) -> Result<Message, io::Error> {
         match self.stream_in.try_read_buf(&mut self.buf) {
             Ok(len) if len > 0 => {

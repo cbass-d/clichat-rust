@@ -32,6 +32,41 @@ pub async fn establish_connection(server: &str) -> Result<TcpStream> {
     Ok(stream)
 }
 
+pub async fn registering_on_server(
+    server: &str,
+    state: &mut ClientState,
+    connection_handle: &mut Option<Connection>,
+) -> Result<()> {
+    let stream = establish_connection(server).await?;
+
+    state.current_server = server.to_string();
+    state.connection_status = ConnectionStatus::Established;
+    let mut connection = Connection::new(stream);
+
+    state.push_notification(TextType::Notification {
+        text: String::from("[*] Successfully connected"),
+    });
+
+    // Once connected, registration message is sent which
+    // provides username to server
+    state.push_notification(TextType::Notification {
+        text: String::from("[*] Registering user"),
+    });
+
+    let message = Message::build(
+        MessageType::Register,
+        state.session_id,
+        Some(state.username.clone()),
+        None,
+    );
+
+    let _ = connection.write(message).await?;
+
+    let _ = connection_handle.insert(connection);
+
+    Ok(())
+}
+
 pub fn display_help(state: &mut ClientState) {
     state.push_notification(TextType::Notification {
         text: String::from("List of available commands:"),
@@ -92,7 +127,6 @@ async fn run(
 
         let mut ticker = tokio::time::interval(Duration::from_millis(250));
         let mut connection_handle: Option<Connection> = None;
-        let mut update: bool = false;
 
         loop {
             if state.exit {
@@ -106,36 +140,34 @@ async fn run(
                 // * Shutdown channel
                 tokio::select! {
                     _tick = ticker.tick() => {},
-                    read_result = connection.read() => {
-                        match read_result {
-                            Ok(message) => {
+                    _ = connection.readable() => {
+                            match connection.read().await {
+                                Ok(message) => {
 
-                                // Certain errors need the connection to be closed
-                                let _ = state.handle_message(message).map_err(|_| {
+                                    // Certain errors need the connection to be closed
+                                    let _ = state.handle_message(message).map_err(|_| {
+                                        connection_handle = None;
+                                    });
+
+                                },
+                                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {},
+                                Err(_) => {
+                                    state.push_notification(TextType::Error {
+                                        text: String::from("[-] Closed connection to server"),
+                                    });
+                                    state.terminate_connection();
                                     connection_handle = None;
-                                });
+                                },
+                            }
 
-                            },
-                            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {},
-                            Err(_) => {
-                                state.push_notification(TextType::Error {
-                                    text: String::from("[-] Closed connection to server"),
-                                });
-                                state.terminate_connection();
-                                connection_handle = None;
-                            },
-                        }
-
-                        update = true;
+                        state_handler.send_update(state.clone());
                     },
                     action = action_rx.recv() => {
                         match action.unwrap() {
                             Action::Help => {
                                     display_help(&mut state);
-                                    update = true;
                             },
                             Action::SetName { name } => {
-
                                 let message = Message::build(
                                         MessageType::ChangeName,
                                         state.session_id,
@@ -150,7 +182,6 @@ async fn run(
                                 let _ = connection.write(message).await;
                             },
                             Action::SendTo { room, message } => {
-
                                 let message = Message::build(
                                         MessageType::SendTo,
                                         state.session_id,
@@ -165,9 +196,8 @@ async fn run(
                                     state.push_notification(TextType::Error {
                                             text: String::from("[-] Cannot send message to yourself"),
                                     });
-
-                                    update = true;
                                 }
+
                                 else {
 
                                     let message = Message::build(
@@ -181,7 +211,6 @@ async fn run(
                                 }
                             },
                             Action::Join { room } => {
-
                                 let message = Message::build(
                                         MessageType::Join,
                                         state.session_id,
@@ -192,7 +221,6 @@ async fn run(
                                 let _ = connection.write(message).await;
                             },
                             Action::Leave { room } => {
-
                                 let message = Message::build(
                                         MessageType::Leave,
                                         state.session_id,
@@ -203,7 +231,6 @@ async fn run(
                                 let _ = connection.write(message).await;
                             },
                             Action::List { opt } => {
-
                                 let message = Message::build(
                                         MessageType::List,
                                         state.session_id,
@@ -214,7 +241,6 @@ async fn run(
                                 let _ = connection.write(message).await;
                             },
                             Action::Create { room } => {
-
                                 let message = Message::build(
                                         MessageType::Create,
                                         state.session_id,
@@ -230,8 +256,6 @@ async fn run(
                                 });
                                 state.terminate_connection();
                                 connection_handle = None;
-
-                                update = true;
                             },
                             Action::Quit => {
                                 state.exit();
@@ -240,10 +264,11 @@ async fn run(
                                 state.push_notification(TextType::Error {
                                         text: String::from("[-] Invalid command")
                                 });
-                                update = true;
                             },
                             _ => {}
                         }
+
+                        state_handler.send_update(state.clone());
                     },
                     _ = shutdown_state.recv() => {
                         break;
@@ -271,56 +296,22 @@ async fn run(
                                     state.push_notification(TextType::Error {
                                         text: String::from("[-] Must set a name"),
                                     });
-                                    update = true;
+                                    state_handler.send_update(state.clone());
                                     continue;
                                 }
 
-                                match establish_connection(&addr).await {
-                                    Ok(stream) => {
-                                        state.current_server = addr;
-                                        state.connection_status = ConnectionStatus::Established;
-                                        let connection = Connection::new(stream);
-                                        let _ = connection_handle.insert(connection);
-                                        state.push_notification(TextType::Notification {
-                                            text: String::from("[*] Successfully connected"),
-                                        });
-
-                                        // Once connected, registration message is sent which
-                                        // provides username to server
-                                        state.push_notification(TextType::Notification {
-                                            text: String::from("[*] Registering user"),
-                                        });
-
-                                        let message = Message::build(
-                                                MessageType::Register,
-                                                state.session_id,
-                                                Some(state.username.clone()),
-                                                None,
-                                            );
-
-                                        if let Some(connection) = connection_handle.as_mut() {
-                                            let _ = connection.write(message).await;
-                                        }
-                                        else {
+                                else {
+                                    match registering_on_server(&addr, &mut state, &mut connection_handle).await {
+                                        Ok(()) => {},
+                                        Err(e) => {
                                             state.push_notification(TextType::Error {
-                                                text: String::from("[-] Failed to get connection handle"),
+                                                text: format!("[-] Failed to register on server: {e}"),
                                             });
-                                            state.push_notification(TextType::Error {
-                                                text: String::from("[-] Disconnecting from server"),
-                                            });
-                                            state.terminate_connection();
-                                            connection_handle = None;
-                                            state.connection_status = ConnectionStatus::Unitiliazed;
-                                        }
-                                    },
-                                    Err(e) => {
-                                        let err = e.to_string();
-                                        state.push_notification(TextType::Error {
-                                            text: format!("[-] Failed to connect: {err}"),
-                                        });
-                                    },
+                                        },
+                                    }
                                 }
-                            },
+
+                           },
                             Action::Quit => {
                                 state.exit();
                             },
@@ -336,18 +327,12 @@ async fn run(
                             }
                         }
 
-                        update = true;
+                        state_handler.send_update(state.clone());
                     },
                     _ = shutdown_state.recv() => {
                             break;
                     }
                 }
-            }
-
-            // Update state if needed
-            if update {
-                state_handler.send_update(state.clone());
-                update = false;
             }
         }
     });
@@ -406,7 +391,7 @@ fn shutdown() {
 #[tokio::main]
 async fn main() -> Result<()> {
     // Create broadcast channel to send shutdown signal to the different components
-    let (shutdown_tx, mut shutdown_rx) = broadcast::channel::<Terminate>(2);
+    let (shutdown_tx, mut shutdown_rx) = broadcast::channel::<Terminate>(1);
     let mut shutdown_main = shutdown_rx.resubscribe();
 
     tokio::spawn(async move {

@@ -456,8 +456,8 @@ pub async fn handle_session(
                     let _ = client_connection.write(message).await;
                 }
             },
-            read_result = client_connection.read() => {
-                match read_result {
+            _ = client_connection.readable() => {
+                match client_connection.read().await {
                     Ok(message) => {
                         let header = message.header;
                         match header.message_type {

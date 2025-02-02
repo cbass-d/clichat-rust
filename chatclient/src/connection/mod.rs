@@ -32,8 +32,11 @@ impl Connection {
         Ok(())
     }
 
+    pub async fn readable(&self) -> Result<(), io::Error> {
+        self.stream_in.readable().await
+    }
+
     pub async fn read(&mut self) -> Result<Message, io::Error> {
-        let _ = self.stream_in.readable().await;
         match self.stream_in.try_read_buf(&mut self.buf) {
             Ok(len) if len > 0 => {
                 let bytes = &self.buf[0..len];
