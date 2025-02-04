@@ -8,17 +8,17 @@ pub use state::{ClientState, ConnectionStatus};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 
 pub struct StateHandler {
-    state_tx: UnboundedSender<ClientState>,
+    state_tx: UnboundedSender<()>,
 }
 
 impl StateHandler {
-    pub fn new() -> (Self, UnboundedReceiver<ClientState>) {
-        let (state_tx, state_rx) = mpsc::unbounded_channel::<ClientState>();
+    pub fn new() -> (Self, UnboundedReceiver<()>) {
+        let (state_tx, state_rx) = mpsc::unbounded_channel::<()>();
 
         (Self { state_tx }, state_rx)
     }
 
-    pub fn send_update(&self, new_state: ClientState) {
-        self.state_tx.send(new_state).unwrap();
+    pub fn updated(&self) {
+        self.state_tx.send(()).unwrap();
     }
 }

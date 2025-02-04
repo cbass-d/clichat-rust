@@ -16,7 +16,6 @@ pub struct ClientState {
     pub username: String,
     pub session_id: u64,
     pub notifications: Vec<TextType>,
-    pub exit: bool,
 }
 
 impl Default for ClientState {
@@ -39,7 +38,6 @@ impl Default for ClientState {
             username: String::new(),
             session_id: u64::MAX,
             notifications: startup_notifications,
-            exit: false,
         }
     }
 }
@@ -49,9 +47,7 @@ impl ClientState {
         self.notifications.push(notification);
     }
 
-    pub fn exit(&mut self) {
-        self.exit = true;
-    }
+    pub fn exit(&mut self) {}
 
     pub fn terminate_connection(&mut self) {
         self.connection_status = ConnectionStatus::Unitiliazed;

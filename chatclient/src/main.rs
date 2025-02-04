@@ -5,6 +5,7 @@ mod state_handler;
 mod tui;
 
 use anyhow::Result;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::{
     io,
@@ -34,31 +35,37 @@ pub async fn establish_connection(server: &str) -> Result<TcpStream> {
 
 pub async fn registering_on_server(
     server: &str,
-    state: &mut ClientState,
+    state: Arc<Mutex<ClientState>>,
     connection_handle: &mut Option<Connection>,
 ) -> Result<()> {
     let stream = establish_connection(server).await?;
 
-    state.current_server = server.to_string();
-    state.connection_status = ConnectionStatus::Established;
+    {
+        let mut state = state.lock().unwrap();
+        state.current_server = server.to_string();
+        state.connection_status = ConnectionStatus::Established;
+    }
     let mut connection = Connection::new(stream);
 
-    state.push_notification(TextType::Notification {
-        text: String::from("[*] Successfully connected"),
-    });
+    {
+        let mut state = state.lock().unwrap();
+        state.push_notification(TextType::Notification {
+            text: String::from("[*] Successfully connected"),
+        });
 
-    // Once connected, registration message is sent which
-    // provides username to server
-    state.push_notification(TextType::Notification {
-        text: String::from("[*] Registering user"),
-    });
+        // Once connected, registration message is sent which
+        // provides username to server
+        state.push_notification(TextType::Notification {
+            text: String::from("[*] Registering user"),
+        });
+    }
 
-    let message = Message::build(
-        MessageType::Register,
-        state.session_id,
-        Some(state.username.clone()),
-        None,
-    );
+    let (session_id, username) = {
+        let guard = state.lock().unwrap();
+        (guard.session_id.clone(), guard.username.clone())
+    };
+
+    let message = Message::build(MessageType::Register, session_id, Some(username), None);
 
     let _ = connection.write(message).await?;
 
@@ -109,6 +116,7 @@ pub fn display_help(state: &mut ClientState) {
 async fn run(
     shutdown_tx: broadcast::Sender<Terminate>,
     shutdown_rx: &mut broadcast::Receiver<Terminate>,
+    master_state: Arc<Mutex<ClientState>>,
 ) -> Result<()> {
     // Initialize required strucutres:
     // * Channel for passing state between TUI and state handler
@@ -120,217 +128,291 @@ async fn run(
     let mut shutdown_tui = shutdown_rx.resubscribe();
 
     // State Handler
-    let state_task = tokio::spawn(async move {
-        // Create and send initial state to TUI
-        let mut state = ClientState::default();
-        state_handler.send_update(state.clone());
+    let state_task = tokio::spawn({
+        let handler_state = Arc::clone(&master_state);
+        let mut exit = false;
 
-        let mut ticker = tokio::time::interval(Duration::from_millis(250));
-        let mut connection_handle: Option<Connection> = None;
+        async move {
+            // Set up initial TUI state
+            state_handler.updated();
 
-        loop {
-            if state.exit {
-                let _ = shutdown_tx.send(Terminate::Exit);
-            }
+            let mut ticker = tokio::time::interval(Duration::from_millis(250));
+            let mut connection_handle: Option<Connection> = None;
 
-            if let Some(connection) = connection_handle.as_mut() {
-                // Three sources of events:
-                // * Server Tcp stream
-                // * Action channel from TUI
-                // * Shutdown channel
-                tokio::select! {
-                    _tick = ticker.tick() => {},
-                    _ = connection.readable() => {
-                            match connection.read().await {
-                                Ok(message) => {
+            loop {
+                if exit {
+                    let _ = shutdown_tx.send(Terminate::Exit);
+                }
 
-                                    // Certain errors need the connection to be closed
-                                    let _ = state.handle_message(message).map_err(|_| {
+                if let Some(connection) = connection_handle.as_mut() {
+                    // Three sources of events:
+                    // * Server Tcp stream
+                    // * Action channel from TUI
+                    // * Shutdown channel
+                    tokio::select! {
+                        _tick = ticker.tick() => {},
+                        _ = connection.readable() => {
+                                match connection.read().await {
+                                    Ok(message) => {
+                                        let mut handler_state = handler_state.lock().unwrap();
+
+                                        // Certain errors need the connection to be closed
+                                        let _ = handler_state.handle_message(message).map_err(|_| {
+                                            connection_handle = None;
+                                        });
+
+                                    },
+                                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {},
+                                    Err(_) => {
+                                        let mut handler_state = handler_state.lock().unwrap();
+
+                                        handler_state.push_notification(TextType::Error {
+                                            text: String::from("[-] Closed connection to server"),
+                                        });
+
+                                        handler_state.terminate_connection();
                                         connection_handle = None;
-                                    });
-
-                                },
-                                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {},
-                                Err(_) => {
-                                    state.push_notification(TextType::Error {
-                                        text: String::from("[-] Closed connection to server"),
-                                    });
-                                    state.terminate_connection();
-                                    connection_handle = None;
-                                },
-                            }
-
-                        state_handler.send_update(state.clone());
-                    },
-                    action = action_rx.recv() => {
-                        match action.unwrap() {
-                            Action::Help => {
-                                    display_help(&mut state);
-                            },
-                            Action::SetName { name } => {
-                                let message = Message::build(
-                                        MessageType::ChangeName,
-                                        state.session_id,
-                                        Some(name),
-                                        None
-                                    );
-
-                                state.push_notification(TextType::Notification {
-                                        text: String::from("[*] Attemping name change")
-                                });
-
-                                let _ = connection.write(message).await;
-                            },
-                            Action::SendTo { room, message } => {
-                                let message = Message::build(
-                                        MessageType::SendTo,
-                                        state.session_id,
-                                        Some(room),
-                                        Some(message),
-                                    );
-
-                                let _ = connection.write(message).await;
-                            },
-                            Action::PrivMsg{ user, message } => {
-                                if user == state.username {
-                                    state.push_notification(TextType::Error {
-                                            text: String::from("[-] Cannot send message to yourself"),
-                                    });
+                                    },
                                 }
 
-                                else {
+                            state_handler.updated();
+                        },
+                        action = action_rx.recv() => {
+                            match action {
+                                Some(Action::Help) => {
+                                    let mut handler_state = handler_state.lock().unwrap();
+
+                                    display_help(&mut handler_state);
+                                },
+                                Some(Action::SetName { name }) => {
+                                    let session_id = {
+                                            let guard = handler_state.lock().unwrap();
+                                            guard.session_id.clone()
+                                    };
 
                                     let message = Message::build(
-                                            MessageType::PrivMsg,
-                                            state.session_id,
-                                            Some(user),
+                                            MessageType::ChangeName,
+                                            session_id,
+                                            Some(name),
+                                            None
+                                    );
+
+                                    let _ = connection.write(message).await;
+
+                                    let mut handler_state = handler_state.lock().unwrap();
+
+                                    handler_state.push_notification(TextType::Notification {
+                                            text: String::from("[*] Attemping name change")
+                                    });
+
+                                },
+                                Some(Action::SendTo { room, message }) => {
+                                    let session_id = {
+                                            let guard = handler_state.lock().unwrap();
+                                            guard.session_id.clone()
+                                    };
+                                    let message = Message::build(
+                                            MessageType::SendTo,
+                                            session_id,
+                                            Some(room),
                                             Some(message),
                                         );
 
                                     let _ = connection.write(message).await;
-                                }
-                            },
-                            Action::Join { room } => {
-                                let message = Message::build(
-                                        MessageType::Join,
-                                        state.session_id,
-                                        Some(room),
-                                        None,
-                                    );
+                                },
+                                Some(Action::PrivMsg{ user, message }) => {
+                                    let (session_id, username) = {
+                                            let guard = handler_state.lock().unwrap();
+                                            (guard.session_id.clone(), guard.username.clone())
+                                    };
 
-                                let _ = connection.write(message).await;
-                            },
-                            Action::Leave { room } => {
-                                let message = Message::build(
-                                        MessageType::Leave,
-                                        state.session_id,
-                                        Some(room),
-                                        None,
-                                    );
-
-                                let _ = connection.write(message).await;
-                            },
-                            Action::List { opt } => {
-                                let message = Message::build(
-                                        MessageType::List,
-                                        state.session_id,
-                                        Some(opt),
-                                        None,
-                                    );
-
-                                let _ = connection.write(message).await;
-                            },
-                            Action::Create { room } => {
-                                let message = Message::build(
-                                        MessageType::Create,
-                                        state.session_id,
-                                        Some(room),
-                                        None,
-                                    );
-
-                                let _ = connection.write(message).await;
-                            },
-                            Action::Disconnect => {
-                                state.push_notification(TextType::Notification {
-                                        text: String::from("[-] Closing connection to server"),
-                                });
-                                state.terminate_connection();
-                                connection_handle = None;
-                            },
-                            Action::Quit => {
-                                state.exit();
-                            },
-                            Action::Invalid => {
-                                state.push_notification(TextType::Error {
-                                        text: String::from("[-] Invalid command")
-                                });
-                            },
-                            _ => {}
-                        }
-
-                        state_handler.send_update(state.clone());
-                    },
-                    _ = shutdown_state.recv() => {
-                        break;
-                    }
-                }
-            } else {
-                // Two sources of events:
-                // * Action channel from TUI
-                // * Shutdown channel
-                tokio::select! {
-                    _tick = ticker.tick() => {},
-                    action = action_rx.recv() => {
-                        match action.unwrap() {
-                            Action::Help => {
-                                display_help(&mut state);
-                            },
-                            Action::SetName { name } => {
-                                state.username = name.clone();
-                                state.push_notification(TextType::Notification {
-                                    text: format!("[*] Name set to [{name}]"),
-                                });
-                            },
-                            Action::Connect { addr } => {
-                                if state.username.is_empty() {
-                                    state.push_notification(TextType::Error {
-                                        text: String::from("[-] Must set a name"),
-                                    });
-                                    state_handler.send_update(state.clone());
-                                    continue;
-                                }
-
-                                else {
-                                    match registering_on_server(&addr, &mut state, &mut connection_handle).await {
-                                        Ok(()) => {},
-                                        Err(e) => {
-                                            state.push_notification(TextType::Error {
-                                                text: format!("[-] Failed to register on server: {e}"),
-                                            });
-                                        },
+                                    if user == username {
+                                        let mut handler_state = handler_state.lock().unwrap();
+                                        handler_state.push_notification(TextType::Error {
+                                                text: String::from("[-] Cannot send message to yourself"),
+                                        });
                                     }
-                                }
 
-                           },
-                            Action::Quit => {
-                                state.exit();
-                            },
-                            Action::Invalid => {
-                                state.push_notification(TextType::Error {
-                                    text: String::from("[-] Invalid command"),
-                                });
-                            },
-                            _ => {
-                                state.push_notification(TextType::Error {
-                                    text: String::from("[-] Not connected to a server")
-                                });
+                                    else {
+                                        let message = Message::build(
+                                                MessageType::PrivMsg,
+                                                session_id,
+                                                Some(user),
+                                                Some(message),
+                                            );
+
+                                        let _ = connection.write(message).await;
+                                    }
+                                },
+                                Some(Action::Join { room }) => {
+                                    let session_id = {
+                                        let guard = handler_state.lock().unwrap();
+                                        guard.session_id.clone()
+                                    };
+
+                                    let message = Message::build(
+                                            MessageType::Join,
+                                            session_id,
+                                            Some(room),
+                                            None,
+                                        );
+
+                                    let _ = connection.write(message).await;
+                                },
+                                Some(Action::Leave { room }) => {
+                                    let session_id = {
+                                        let guard = handler_state.lock().unwrap();
+                                        guard.session_id.clone()
+                                    };
+
+                                    let message = Message::build(
+                                            MessageType::Leave,
+                                            session_id,
+                                            Some(room),
+                                            None,
+                                        );
+
+                                    let _ = connection.write(message).await;
+                                },
+                                Some(Action::List { opt }) => {
+                                    let session_id = {
+                                        let guard = handler_state.lock().unwrap();
+                                        guard.session_id.clone()
+                                    };
+
+                                    let message = Message::build(
+                                            MessageType::List,
+                                            session_id,
+                                            Some(opt),
+                                            None,
+                                        );
+
+                                    let _ = connection.write(message).await;
+                                },
+                                Some(Action::Create { room }) => {
+                                    let session_id = {
+                                        let guard = handler_state.lock().unwrap();
+                                        guard.session_id.clone()
+                                    };
+
+                                    let message = Message::build(
+                                            MessageType::Create,
+                                            session_id,
+                                            Some(room),
+                                            None,
+                                        );
+
+                                    let _ = connection.write(message).await;
+                                },
+                                Some(Action::Disconnect) => {
+                                    let mut handler_state = handler_state.lock().unwrap();
+
+                                    handler_state.push_notification(TextType::Notification {
+                                            text: String::from("[-] Closing connection to server"),
+                                    });
+
+                                    handler_state.terminate_connection();
+                                    connection_handle = None;
+                                },
+                                Some(Action::Quit) => {
+                                    let mut handler_state = handler_state.lock().unwrap();
+                                    handler_state.exit();
+                                    exit = true;
+                                },
+                                Some(Action::Invalid) => {
+                                    let mut handler_state = handler_state.lock().unwrap();
+
+                                    handler_state.push_notification(TextType::Error {
+                                            text: String::from("[-] Invalid command")
+                                    });
+                                },
+                                _ => {}
                             }
-                        }
 
-                        state_handler.send_update(state.clone());
-                    },
-                    _ = shutdown_state.recv() => {
+                            state_handler.updated();
+                        },
+                        _ = shutdown_state.recv() => {
                             break;
+                        }
+                    }
+                } else {
+                    // Two sources of events:
+                    // * Action channel from TUI
+                    // * Shutdown channel
+                    tokio::select! {
+                        _tick = ticker.tick() => {},
+                        action = action_rx.recv() => {
+                            match action {
+                                Some(Action::Help) => {
+                                    let mut handler_state = handler_state.lock().unwrap();
+
+                                    display_help(&mut handler_state);
+                                },
+                                Some(Action::SetName { name }) => {
+                                    let mut handler_state = handler_state.lock().unwrap();
+
+                                    handler_state.username = name.clone();
+                                    handler_state.push_notification(TextType::Notification {
+                                        text: format!("[*] Name set to [{name}]"),
+                                    });
+
+                                },
+                                Some(Action::Connect { addr }) => {
+                                    let username = {
+                                        let guard = handler_state.lock().unwrap();
+                                        guard.username.clone()
+                                    };
+
+                                    if username.is_empty() {
+                                        let mut handler_state = handler_state.lock().unwrap();
+
+                                        handler_state.push_notification(TextType::Error {
+                                            text: String::from("[-] Must set a name"),
+                                        });
+                                        state_handler.updated();
+                                        continue;
+                                    }
+
+                                    else {
+                                        match registering_on_server(&addr, Arc::clone(&handler_state), &mut connection_handle).await {
+                                            Ok(()) => {},
+                                            Err(e) => {
+                                                let mut handler_state = handler_state.lock().unwrap();
+
+                                                handler_state.push_notification(TextType::Error {
+                                                    text: format!("[-] Failed to register on server: {e}"),
+                                                });
+                                            },
+                                        }
+                                    }
+
+                                },
+                                Some(Action::Quit) => {
+                                    let mut handler_state = handler_state.lock().unwrap();
+
+                                    handler_state.exit();
+                                },
+                                Some(Action::Invalid) => {
+                                    let mut handler_state = handler_state.lock().unwrap();
+
+                                    handler_state.push_notification(TextType::Error {
+                                        text: String::from("[-] Invalid command"),
+                                    });
+                                },
+                                _ => {
+                                    let mut handler_state = handler_state.lock().unwrap();
+
+                                    handler_state.push_notification(TextType::Error {
+                                        text: String::from("[-] Not connected to a server")
+                                    });
+                                }
+                            }
+
+                            state_handler.updated();
+                        },
+                        _ = shutdown_state.recv() => {
+                                break;
+                        }
                     }
                 }
             }
@@ -338,44 +420,50 @@ async fn run(
     });
 
     // TUI Handler
-    let tui_task = tokio::spawn(async move {
-        let mut terminal = Tui::setup_terminal();
+    let tui_task = tokio::spawn({
+        let tui_state = Arc::clone(&master_state);
 
-        // Get initial State
-        let state = state_rx.recv().await.unwrap();
-        let mut app_router = AppRouter::new(&state, tui.action_tx);
-        let _ = terminal.draw(|f| app_router.render(f, ()));
+        async move {
+            let mut terminal = Tui::setup_terminal();
 
-        // Main loop with three sources of events:
-        // * Terminal usesr interface events such as keyboard
-        // * State update channel
-        // * Client shutdown channel
-        loop {
-            tokio::select! {
-                event = tui_events.next() => {
-                    match event.unwrap() {
-                        Event::Key(key) => {
-                            app_router.handle_key_event(key);
-                        },
-                        Event::Tick => {},
-                        Event::Error => {},
+            // Get initial State
+            let mut app_router = AppRouter::new(&tui_state.lock().unwrap(), tui.action_tx);
+            let _ = terminal.draw(|f| app_router.render(f, ()));
+
+            let mut ticker = tokio::time::interval(Duration::from_millis(250));
+
+            // Main loop with three sources of events:
+            // * Terminal usesr interface events such as keyboard
+            // * State update channel
+            // * Client shutdown channel
+            loop {
+                tokio::select! {
+                    _ = ticker.tick() => {},
+                    event = tui_events.next() => {
+                        match event {
+                            Ok(Event::Key(key)) => {
+                                app_router.handle_key_event(key);
+                            },
+                            Ok(Event::Tick) => {},
+                            Ok(Event::Error) => {},
+                            _ => {},
+                        }
+                    },
+                    _ = state_rx.recv() => {
+                        let tui_state = tui_state.lock().unwrap();
+
+                        app_router = app_router.update(&tui_state);
+                    },
+                    _ = shutdown_tui.recv() => {
+                        break;
                     }
-                },
-                state = state_rx.recv() => {
-                    if let Some(state) = state {
-                        let _ = terminal.clear();
-                        app_router = app_router.update(&state);
-                    }
-                },
-                _ = shutdown_tui.recv() => {
-                    break;
                 }
+
+                let _ = terminal.draw(|f| app_router.render(f, ()));
             }
 
-            let _ = terminal.draw(|f| app_router.render(f, ()));
+            Tui::teardown_terminal(&mut terminal);
         }
-
-        Tui::teardown_terminal(&mut terminal);
     });
 
     // Wait for both tasks to finish
@@ -394,8 +482,10 @@ async fn main() -> Result<()> {
     let (shutdown_tx, mut shutdown_rx) = broadcast::channel::<Terminate>(1);
     let mut shutdown_main = shutdown_rx.resubscribe();
 
+    let handler_state = Arc::new(Mutex::new(ClientState::default()));
+
     tokio::spawn(async move {
-        let _ = run(shutdown_tx, &mut shutdown_rx).await;
+        let _ = run(shutdown_tx, &mut shutdown_rx, Arc::clone(&handler_state)).await;
     })
     .await?;
 
