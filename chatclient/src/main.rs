@@ -67,7 +67,7 @@ pub async fn registering_on_server(
 
     let message = Message::build(MessageType::Register, session_id, Some(username), None);
 
-    let _ = connection.write(message).await?;
+    let _ = connection.write(message).await;
 
     let _ = connection_handle.insert(connection);
 
@@ -142,6 +142,7 @@ async fn run(
             loop {
                 if exit {
                     let _ = shutdown_tx.send(Terminate::Exit);
+                    connection_handle = None;
                 }
 
                 if let Some(connection) = connection_handle.as_mut() {
@@ -187,7 +188,7 @@ async fn run(
                                 Some(Action::SetName { name }) => {
                                     let session_id = {
                                             let guard = handler_state.lock().unwrap();
-                                            guard.session_id.clone()
+                                            guard.session_id
                                     };
 
                                     let message = Message::build(
@@ -209,7 +210,7 @@ async fn run(
                                 Some(Action::SendTo { room, message }) => {
                                     let session_id = {
                                             let guard = handler_state.lock().unwrap();
-                                            guard.session_id.clone()
+                                            guard.session_id
                                     };
                                     let message = Message::build(
                                             MessageType::SendTo,
@@ -223,7 +224,7 @@ async fn run(
                                 Some(Action::PrivMsg{ user, message }) => {
                                     let (session_id, username) = {
                                             let guard = handler_state.lock().unwrap();
-                                            (guard.session_id.clone(), guard.username.clone())
+                                            (guard.session_id, guard.username.clone())
                                     };
 
                                     if user == username {
@@ -247,7 +248,7 @@ async fn run(
                                 Some(Action::Join { room }) => {
                                     let session_id = {
                                         let guard = handler_state.lock().unwrap();
-                                        guard.session_id.clone()
+                                        guard.session_id
                                     };
 
                                     let message = Message::build(
@@ -262,7 +263,7 @@ async fn run(
                                 Some(Action::Leave { room }) => {
                                     let session_id = {
                                         let guard = handler_state.lock().unwrap();
-                                        guard.session_id.clone()
+                                        guard.session_id
                                     };
 
                                     let message = Message::build(
@@ -277,7 +278,7 @@ async fn run(
                                 Some(Action::List { opt }) => {
                                     let session_id = {
                                         let guard = handler_state.lock().unwrap();
-                                        guard.session_id.clone()
+                                        guard.session_id
                                     };
 
                                     let message = Message::build(
@@ -292,7 +293,7 @@ async fn run(
                                 Some(Action::Create { room }) => {
                                     let session_id = {
                                         let guard = handler_state.lock().unwrap();
-                                        guard.session_id.clone()
+                                        guard.session_id
                                     };
 
                                     let message = Message::build(
@@ -389,7 +390,7 @@ async fn run(
                                 },
                                 Some(Action::Quit) => {
                                     let mut handler_state = handler_state.lock().unwrap();
-
+                                    exit = true;
                                     handler_state.exit();
                                 },
                                 Some(Action::Invalid) => {
@@ -472,7 +473,7 @@ async fn run(
     Ok(())
 }
 
-fn shutdown() {
+fn shutdown(_master_state: Arc<Mutex<ClientState>>) {
     println!("shutting down client");
 }
 
@@ -482,16 +483,25 @@ async fn main() -> Result<()> {
     let (shutdown_tx, mut shutdown_rx) = broadcast::channel::<Terminate>(1);
     let mut shutdown_main = shutdown_rx.resubscribe();
 
-    let handler_state = Arc::new(Mutex::new(ClientState::default()));
+    let master_state = Arc::new(Mutex::new(ClientState::default()));
 
-    tokio::spawn(async move {
-        let _ = run(shutdown_tx, &mut shutdown_rx, Arc::clone(&handler_state)).await;
+    tokio::spawn({
+        let master_state_clone = Arc::clone(&master_state);
+
+        async move {
+            let _ = run(
+                shutdown_tx,
+                &mut shutdown_rx,
+                Arc::clone(&master_state_clone),
+            )
+            .await;
+        }
     })
     .await?;
 
     tokio::select! {
         _ = shutdown_main.recv() => {
-            shutdown();
+            shutdown(master_state);
         }
     }
 

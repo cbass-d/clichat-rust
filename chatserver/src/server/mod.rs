@@ -136,6 +136,7 @@ impl Server {
         let addr = format!("0.0.0.0:{}", self.port);
         let listener = TcpListener::bind(addr).await?;
         let (shutdown_tx, shutdown_rx) = broadcast::channel(1);
+
         info!("[+] Server started");
         info!("[+] Listening at port {0}", self.port);
 
@@ -176,249 +177,265 @@ impl Server {
                     }
                 },
                 server_request = self.rx.recv() => {
-                    let (event, reply_tx) = server_request.unwrap();
-                    match event {
-                        ServerEvent::Register { id, username } => {
-
-                            if self.username_to_id.contains_key(&username) {
-                                let reply = ServerReply::Failed {
-                                    error: String::from("Username already exists"),
-                                };
-
-                                let _ = reply_tx.send(reply);
-                            }
-
-                            else {
-                                let (session, _) = self.sessions.get_mut(&id).unwrap();
-                                session.set_username(&username);
-                                self.username_to_id.insert(username.clone(), id);
-                                self.id_to_username.insert(id, username.clone());
-                                let reply = ServerReply::Registered { username };
-
-                                let _ = reply_tx.send(reply);
-                            }
-                        },
-                        ServerEvent::ChangeName { id, new_username } => {
-                            if self.username_to_id.contains_key(&new_username) {
-                                let reply = ServerReply::Failed {
-                                    error: String::from("Username already exists"),
-                                };
-
-                                let _ = reply_tx.send(reply);
-                            }
-
-                            else {
-                                let (session, _) = self.sessions.get_mut(&id).unwrap();
-                                session.set_username(&new_username);
-                                let old_username = self.id_to_username[&id].clone();
-                                *self.id_to_username.get_mut(&id).unwrap() = new_username.clone();
-                                self.username_to_id.remove(&old_username);
-                                self.username_to_id.insert(new_username.clone(), id);
-
-                                let reply = ServerReply::NameChanged {
-                                    new_username,
-                                    old_username,
-                                };
-
-                                let _ = reply_tx.send(reply);
-                            }
-                        },
-                        ServerEvent::List { id, opt } => {
-                            match opt.as_ref() {
-                                "users" => {
-                                    let users = self.username_to_id.clone().into_keys().map(|s| s.to_string())
-                                        .collect::<Vec<String>>()
-                                        .join(",");
-
-                                    let reply = ServerReply::ListingUsers {
-                                        content: users,
-                                    };
-
-                                    let _ = reply_tx.send(reply);
-                                },
-                                "rooms" => {
-                                    let (session, _) = self.sessions.get_mut(&id).unwrap();
-                                    let user_rooms = session.rooms.clone().into_keys()
-                                        .map(|s| s.to_string())
-                                        .collect::<Vec<String>>()
-                                        .join(",");
-
-                                    let reply = ServerReply::ListingUserRooms {
-                                        content: user_rooms,
-                                    };
-
-                                    let _ = reply_tx.send(reply);
-                                },
-                                "allrooms" => {
-                                    let rooms = self.room_manager.get_rooms();
-                                    let rooms = rooms.into_iter().map(|s| s.to_string())
-                                        .collect::<Vec<String>>()
-                                        .join(",");
-
-                                    let reply = ServerReply::ListingRooms {
-                                        content: rooms,
-                                    };
-
-                                    let _ = reply_tx.send(reply);
-                                },
-                                _ => {
+                    if let Some((event, reply_tx)) = server_request {
+                        match event {
+                            ServerEvent::Register { id, username } => {
+                                if self.username_to_id.contains_key(&username) {
                                     let reply = ServerReply::Failed {
-                                        error: String::from("Invalid option")
+                                        error: String::from("Username already exists"),
                                     };
 
                                     let _ = reply_tx.send(reply);
-                                },
-                            }
-                        },
-                        ServerEvent::JoinRoom { id, room } => {
-                            let (session, _) = self.sessions.get_mut(&id).unwrap();
+                                }
 
-                            if session.rooms.contains_key(&room) {
-                                let reply = ServerReply::Failed {
-                                    error: String::from("Already part of room"),
-                                };
+                                else {
+                                    if let Some((session, _)) = self.sessions.get_mut(&id) {
+                                        session.set_username(&username);
 
-                                let _ = reply_tx.send(reply);
-                            }
+                                        self.username_to_id.insert(username.clone(), id);
+                                        self.id_to_username.insert(id, username.clone());
 
-                            else {
-                                match session.join_room(&room, &self.room_manager).await {
-                                    Ok(()) => {
-                                        let reply = ServerReply::Joined {
-                                            room,
+                                        let reply = ServerReply::Registered { username };
+
+                                        let _ = reply_tx.send(reply);
+                                    }
+                                }
+                            },
+                            ServerEvent::ChangeName { id, new_username } => {
+                                if self.username_to_id.contains_key(&new_username) {
+                                    let reply = ServerReply::Failed {
+                                        error: String::from("Username already exists"),
+                                    };
+
+                                    let _ = reply_tx.send(reply);
+                                }
+
+                                else {
+                                    if let Some((session, _)) = self.sessions.get_mut(&id) {
+                                        session.set_username(&new_username);
+                                        let old_username = self.id_to_username[&id].clone();
+
+                                        *self.id_to_username.get_mut(&id).unwrap() = new_username.clone();
+                                        self.username_to_id.remove(&old_username);
+                                        self.username_to_id.insert(new_username.clone(), id);
+
+                                        let reply = ServerReply::NameChanged {
+                                            new_username,
+                                            old_username,
+                                        };
+
+                                        let _ = reply_tx.send(reply);
+                                    }
+                                }
+                            },
+                            ServerEvent::List { id, opt } => {
+                                match opt.as_ref() {
+                                    "users" => {
+                                        let users = self.username_to_id.clone().into_keys().map(|s| s.to_string())
+                                            .collect::<Vec<String>>()
+                                            .join(",");
+
+                                        let reply = ServerReply::ListingUsers {
+                                            content: users,
                                         };
 
                                         let _ = reply_tx.send(reply);
                                     },
-                                    Err(e) => {
+                                    "rooms" => {
+                                        if let Some((session, _)) = self.sessions.get_mut(&id) {
+                                            let user_rooms = session.rooms.clone().into_keys()
+                                                .map(|s| s.to_string())
+                                                .collect::<Vec<String>>()
+                                                .join(",");
+
+                                            let reply = ServerReply::ListingUserRooms {
+                                                content: user_rooms,
+                                            };
+
+                                            let _ = reply_tx.send(reply);
+                                        }
+                                    },
+                                    "allrooms" => {
+                                        let rooms = self.room_manager.get_rooms();
+                                        let rooms = rooms.into_iter().map(|s| s.to_string())
+                                            .collect::<Vec<String>>()
+                                            .join(",");
+
+                                        let reply = ServerReply::ListingRooms {
+                                            content: rooms,
+                                        };
+
+                                        let _ = reply_tx.send(reply);
+                                    },
+                                    _ => {
                                         let reply = ServerReply::Failed {
-                                            error: e.to_string(),
+                                            error: String::from("Invalid option")
                                         };
 
                                         let _ = reply_tx.send(reply);
                                     },
                                 }
-                            }
-                        },
-                        ServerEvent::LeaveRoom { id, room } => {
-                            let (session, _) = self.sessions.get_mut(&id).unwrap();
-
-                            if !session.rooms.contains_key(&room) {
-                                let reply = ServerReply::Failed {
-                                    error: String::from("Not part of room"),
-                                };
-
-                                let _ = reply_tx.send(reply);
-                            }
-
-                            else {
-                                match session.leave_room(&room) {
-                                    Ok(()) => {
-                                        let reply = ServerReply::LeftRoom{
-                                            room,
-                                        };
-
-                                        let _ = reply_tx.send(reply);
-                                    },
-                                    Err(e) => {
+                            },
+                            ServerEvent::JoinRoom { id, room } => {
+                                if let Some((session, _)) = self.sessions.get_mut(&id) {
+                                    if session.rooms.contains_key(&room) {
                                         let reply = ServerReply::Failed {
-                                            error: e.to_string(),
+                                            error: String::from("Already part of room"),
                                         };
 
                                         let _ = reply_tx.send(reply);
-                                    },
+                                    }
+
+                                    else {
+                                        match session.join_room(&room, &self.room_manager).await {
+                                            Ok(()) => {
+                                            let reply = ServerReply::Joined {
+                                                room,
+                                            };
+
+                                            let _ = reply_tx.send(reply);
+                                            },
+                                            Err(e) => {
+                                                let reply = ServerReply::Failed {
+                                                    error: e.to_string(),
+                                                };
+
+                                                let _ = reply_tx.send(reply);
+                                            },
+                                        }
+                                    }
                                 }
-                            }
-                        },
-                        ServerEvent::CreateRoom { room } => {
-                            let existing_rooms = self.room_manager.get_rooms();
+                            },
+                            ServerEvent::LeaveRoom { id, room } => {
+                                if let Some((session, _)) = self.sessions.get_mut(&id) {
+                                    if !session.rooms.contains_key(&room) {
+                                        let reply = ServerReply::Failed {
+                                            error: String::from("Not part of room"),
+                                        };
 
-                            if existing_rooms.contains(&room) {
-                                let reply = ServerReply::Failed {
-                                    error: String::from("Room already exists"),
-                                };
+                                        let _ = reply_tx.send(reply);
+                                    }
 
-                                let _ = reply_tx.send(reply);
-                            }
+                                    else {
+                                        match session.leave_room(&room) {
+                                            Ok(()) => {
+                                                let reply = ServerReply::LeftRoom{
+                                                    room,
+                                                };
 
-                            else {
-                                let new_room = Arc::new(Mutex::new(Room::new(&room)));
-                                self.room_manager.add_room(new_room, room.clone());
+                                                let _ = reply_tx.send(reply);
+                                            },
+                                            Err(e) => {
+                                                let reply = ServerReply::Failed {
+                                                    error: e.to_string(),
+                                                };
 
-                                let reply = ServerReply::CreatedRoom {
-                                    room,
-                                };
+                                                let _ = reply_tx.send(reply);
+                                            },
+                                        }
+                                    }
+                                }
+                            },
+                            ServerEvent::CreateRoom { room } => {
+                                let existing_rooms = self.room_manager.get_rooms();
 
-                                let _ = reply_tx.send(reply);
-                            }
+                                if existing_rooms.contains(&room) {
+                                    let reply = ServerReply::Failed {
+                                        error: String::from("Room already exists"),
+                                    };
 
-                        },
-                        ServerEvent::SendTo { id, room, content } => {
-                            let (session, _) = self.sessions.get_mut(&id).unwrap();
+                                    let _ = reply_tx.send(reply);
+                                }
 
-                            if let Some((room_handle, _)) = session.rooms.get(&room) {
-                                let username = &session.username;
+                                else {
+                                    let new_room = Arc::new(Mutex::new(Room::new(&room)));
+                                    self.room_manager.add_room(new_room, room.clone());
 
-                                let message = Message::build(
-                                        MessageType::RoomMessage,
-                                        id,
-                                        Some(room.clone()),
-                                        Some(format!("{username}: {content}")),
-                                    );
+                                    let reply = ServerReply::CreatedRoom {
+                                        room,
+                                    };
 
-                                let _ = room_handle.send_message(message);
+                                    let _ = reply_tx.send(reply);
+                                }
 
-                                let reply = ServerReply::MessagedRoom;
+                            },
+                            ServerEvent::SendTo { id, room, content } => {
+                                if let Some((session, _)) = self.sessions.get_mut(&id) {
+                                    if let Some((room_handle, _)) = session.rooms.get(&room) {
+                                        let username = &session.username;
 
-                                let _ = reply_tx.send(reply);
-                            }
+                                        let message = Message::build(
+                                            MessageType::RoomMessage,
+                                            id,
+                                            Some(room.clone()),
+                                            Some(format!("{username}: {content}")),
+                                        );
 
-                            else {
-                                let reply = ServerReply::Failed {
-                                    error: String::from("Not part of room"),
-                                };
+                                    let _ = room_handle.send_message(message);
 
-                                let _ = reply_tx.send(reply);
-                            }
-                        },
-                        ServerEvent::PrivMsg { id, username, content } => {
+                                        let reply = ServerReply::MessagedRoom;
 
-                            if !self.username_to_id.contains_key(&username) {
-                                let reply = ServerReply::Failed {
-                                    error: String::from("No such user"),
-                                };
+                                        let _ = reply_tx.send(reply);
+                                    }
 
-                                let _ = reply_tx.send(reply);
-                            }
+                                    else {
+                                        let reply = ServerReply::Failed {
+                                            error: String::from("Not part of room"),
+                                        };
 
-                            else {
-                                let sender = &self.id_to_username[&id];
-                                let receiver_id = self.username_to_id[&username];
-                                let (_, receiving_session_tx) = self.sessions.get_mut(&receiver_id).unwrap();
+                                        let _ = reply_tx.send(reply);
+                                    }
+                                }
+                            },
+                            ServerEvent::PrivMsg { id, username, content } => {
 
-                                let message = Message::build(
-                                        MessageType::IncomingMsg,
-                                        id,
-                                        None,
-                                        Some(format!("from {sender}: {content}")),
-                                    );
+                                if !self.username_to_id.contains_key(&username) {
+                                    let reply = ServerReply::Failed {
+                                        error: String::from("No such user"),
+                                    };
 
-                                let _ = receiving_session_tx.send(message);
+                                    let _ = reply_tx.send(reply);
+                                }
 
-                                let reply = ServerReply::MessagedUser;
+                                else {
+                                    let sender = &self.id_to_username[&id];
+                                    let receiver_id = self.username_to_id[&username];
 
-                                let _ = reply_tx.send(reply);
-                            }
+                                    if let Some((_, receiving_session_tx)) = self.sessions.get_mut(&receiver_id) {
 
-                        },
-                        ServerEvent::DropSession { id } => {
-                            if self.id_to_username.contains_key(&id) {
-                                let username = &self.id_to_username[&id].clone();
-                                self.id_to_username.remove(&id);
-                                self.username_to_id.remove(username);
-                            }
-                            self.sessions.remove(&id);
-                        },
+                                        let message = Message::build(
+                                            MessageType::IncomingMsg,
+                                            id,
+                                            None,
+                                            Some(format!("from {sender}: {content}")),
+                                        );
+
+                                        let _ = receiving_session_tx.send(message);
+
+                                        let reply = ServerReply::MessagedUser;
+
+                                        let _ = reply_tx.send(reply);
+                                    }
+
+                                    else {
+                                        let reply = ServerReply::Failed {
+                                            error: String::from("Receiving session not found"),
+                                        };
+
+                                        let _ = reply_tx.send(reply);
+                                    }
+                                }
+
+                            },
+                            ServerEvent::DropSession { id } => {
+                                if self.id_to_username.contains_key(&id) {
+                                    let username = &self.id_to_username[&id].clone();
+                                    self.id_to_username.remove(&id);
+                                    self.username_to_id.remove(username);
+                                }
+                                self.sessions.remove(&id);
+                            },
+                        }
                     }
                 },
             }
@@ -472,10 +489,10 @@ pub async fn handle_session(
                                 let _ = to_server_tx.send((event, tx));
 
                                 // Get reply from sever
-                                let server_reply = rx.await.unwrap();
+                                let server_reply = rx.await;
 
                                 match server_reply {
-                                    ServerReply::Registered { username } => {
+                                    Ok(ServerReply::Registered { username }) => {
                                         let message = Message::build(
                                                 MessageType::Registered,
                                                 0,
@@ -485,7 +502,7 @@ pub async fn handle_session(
 
                                         let _ = client_connection.write(message).await;
                                     },
-                                    ServerReply::Failed { error } => {
+                                    Ok(ServerReply::Failed { error }) => {
                                         let message = Message::build(
                                                 MessageType::Failed,
                                                 0,
@@ -509,10 +526,10 @@ pub async fn handle_session(
                                 let (tx, rx) = oneshot::channel::<ServerReply>();
                                 let _ = to_server_tx.send((event, tx));
 
-                                let server_reply = rx.await.unwrap();
+                                let server_reply = rx.await;
 
                                 match server_reply {
-                                    ServerReply::NameChanged { new_username, old_username } => {
+                                    Ok(ServerReply::NameChanged { new_username, old_username }) => {
                                         let message = Message::build(
                                                 MessageType::ChangedName,
                                                 0,
@@ -522,7 +539,7 @@ pub async fn handle_session(
 
                                         let _ = client_connection.write(message).await;
                                     },
-                                    ServerReply::Failed { error } => {
+                                    Ok(ServerReply::Failed { error }) => {
                                         let message = Message::build(
                                                 MessageType::Failed,
                                                 0,
@@ -547,10 +564,10 @@ pub async fn handle_session(
                                 let (tx, rx) = oneshot::channel::<ServerReply>();
                                 let _ = to_server_tx.send((event, tx));
 
-                                let server_reply = rx.await.unwrap();
+                                let server_reply = rx.await;
 
                                 match server_reply {
-                                    ServerReply::Joined { room } => {
+                                    Ok(ServerReply::Joined { room }) => {
                                         let message = Message::build(
                                                 MessageType::Joined,
                                                 0,
@@ -560,7 +577,7 @@ pub async fn handle_session(
 
                                         let _ = client_connection.write(message).await;
                                     },
-                                    ServerReply::Failed { error } => {
+                                    Ok(ServerReply::Failed { error }) => {
                                         let message = Message::build(
                                                 MessageType::Failed,
                                                 0,
@@ -586,10 +603,10 @@ pub async fn handle_session(
                                 let (tx, rx) = oneshot::channel::<ServerReply>();
                                 let _ = to_server_tx.send((event, tx));
 
-                                let server_reply = rx.await.unwrap();
+                                let server_reply = rx.await;
 
                                 match server_reply {
-                                    ServerReply::LeftRoom { room } => {
+                                    Ok(ServerReply::LeftRoom { room }) => {
                                         let message = Message::build(
                                                 MessageType::LeftRoom,
                                                 0,
@@ -599,7 +616,7 @@ pub async fn handle_session(
 
                                         let _ = client_connection.write(message).await;
                                     },
-                                    ServerReply::Failed { error } => {
+                                    Ok(ServerReply::Failed { error }) => {
                                         let message = Message::build(
                                                 MessageType::Failed,
                                                 0,
@@ -624,10 +641,10 @@ pub async fn handle_session(
                                 let (tx, rx) = oneshot::channel::<ServerReply>();
                                 let _ = to_server_tx.send((event, tx));
 
-                                let server_reply = rx.await.unwrap();
+                                let server_reply = rx.await;
 
                                 match server_reply {
-                                    ServerReply::CreatedRoom { room }=> {
+                                    Ok(ServerReply::CreatedRoom { room }) => {
                                         let message = Message::build(
                                                 MessageType::CreatedRoom,
                                                 0,
@@ -637,7 +654,7 @@ pub async fn handle_session(
 
                                         let _ = client_connection.write(message).await;
                                     },
-                                    ServerReply::Failed { error } => {
+                                    Ok(ServerReply::Failed { error }) => {
                                         let message = Message::build(
                                                 MessageType::Failed,
                                                 0,
@@ -665,10 +682,10 @@ pub async fn handle_session(
                                 let (tx, rx) = oneshot::channel::<ServerReply>();
                                 let _ = to_server_tx.send((event, tx));
 
-                                let server_reply = rx.await.unwrap();
+                                let server_reply = rx.await;
 
                                 match server_reply {
-                                    ServerReply::MessagedRoom => {
+                                    Ok(ServerReply::MessagedRoom) => {
                                         let message = Message::build(
                                                 MessageType::MessagedRoom,
                                                 0,
@@ -678,7 +695,7 @@ pub async fn handle_session(
 
                                         let _ = client_connection.write(message).await;
                                     },
-                                    ServerReply::Failed { error } => {
+                                    Ok(ServerReply::Failed { error }) => {
                                         let message = Message::build(
                                                 MessageType::Failed,
                                                 0,
@@ -703,10 +720,10 @@ pub async fn handle_session(
                                 let (tx, rx) = oneshot::channel::<ServerReply>();
                                 let _ = to_server_tx.send((event, tx));
 
-                                let server_reply = rx.await.unwrap();
+                                let server_reply = rx.await;
 
                                 match server_reply {
-                                    ServerReply::ListingUsers { content } => {
+                                    Ok(ServerReply::ListingUsers { content }) => {
                                         let message = Message::build(
                                                 MessageType::Users,
                                                 0,
@@ -716,7 +733,7 @@ pub async fn handle_session(
 
                                         let _ = client_connection.write(message).await;
                                     },
-                                    ServerReply::ListingUserRooms { content } => {
+                                    Ok(ServerReply::ListingUserRooms { content }) => {
                                         let message = Message::build(
                                                 MessageType::UserRooms,
                                                 0,
@@ -726,7 +743,7 @@ pub async fn handle_session(
 
                                         let _ = client_connection.write(message).await;
                                     },
-                                    ServerReply::ListingRooms { content } => {
+                                    Ok(ServerReply::ListingRooms { content }) => {
                                         let message = Message::build(
                                                 MessageType::AllRooms,
                                                 0,
@@ -736,7 +753,7 @@ pub async fn handle_session(
 
                                         let _ = client_connection.write(message).await;
                                     },
-                                    ServerReply::Failed { error } => {
+                                    Ok(ServerReply::Failed { error }) => {
                                         let message = Message::build(
                                                 MessageType::Failed,
                                                 0,
@@ -762,10 +779,10 @@ pub async fn handle_session(
                                 let (tx, rx) = oneshot::channel::<ServerReply>();
                                 let _ = to_server_tx.send((event, tx));
 
-                                let server_reply = rx.await.unwrap();
+                                let server_reply = rx.await;
 
                                 match server_reply {
-                                    ServerReply::MessagedUser => {
+                                    Ok(ServerReply::MessagedUser) => {
                                         let message = Message::build(
                                                 MessageType::OutgoingMsg,
                                                 0,
@@ -776,7 +793,7 @@ pub async fn handle_session(
                                        let _ = client_connection.write(message).await;
 
                                     },
-                                    ServerReply::Failed { error } => {
+                                    Ok(ServerReply::Failed { error }) => {
                                         let message = Message::build(
                                                 MessageType::Failed,
                                                 0,

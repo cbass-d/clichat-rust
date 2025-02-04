@@ -39,8 +39,8 @@ async fn main() -> Result<()> {
         Ok(()) => {}
         Err(e) => {
             let e = e.to_string();
-            error!("[-] Failed to start server: {e}");
-            return Err(anyhow!("Failed to start server"));
+            error!("[-] Server error: {e}");
+            return Err(anyhow!("Server error: {e}"));
         }
     }
 
