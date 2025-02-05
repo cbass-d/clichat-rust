@@ -65,9 +65,9 @@ pub async fn registering_on_server(
         (guard.session_id.clone(), guard.username.clone())
     };
 
-    let message = Message::build(MessageType::Register, session_id, Some(username), None);
-
-    let _ = connection.write(message).await;
+    if let Ok(message) = Message::build(MessageType::Register, session_id, Some(username), None) {
+        let _ = connection.write(message).await;
+    }
 
     let _ = connection_handle.insert(connection);
 
@@ -157,10 +157,12 @@ async fn run(
                                     Ok(message) => {
                                         let mut handler_state = handler_state.lock().unwrap();
 
-                                        // Certain errors need the connection to be closed
-                                        let _ = handler_state.handle_message(message).map_err(|_| {
-                                            connection_handle = None;
-                                        });
+                                        if let Some(message) = message {
+                                            // Certain errors need the connection to be closed
+                                            let _ = handler_state.handle_message(message).map_err(|_| {
+                                                connection_handle = None;
+                                            });
+                                        }
 
                                     },
                                     Err(e) if e.kind() == io::ErrorKind::WouldBlock => {},
@@ -191,14 +193,15 @@ async fn run(
                                             guard.session_id
                                     };
 
-                                    let message = Message::build(
+                                    if let Ok(message) = Message::build(
                                             MessageType::ChangeName,
                                             session_id,
                                             Some(name),
                                             None
-                                    );
+                                    ) {
+                                        let _ = connection.write(message).await;
+                                    }
 
-                                    let _ = connection.write(message).await;
 
                                     let mut handler_state = handler_state.lock().unwrap();
 
@@ -212,14 +215,16 @@ async fn run(
                                             let guard = handler_state.lock().unwrap();
                                             guard.session_id
                                     };
-                                    let message = Message::build(
+
+                                    if let Ok(message) = Message::build(
                                             MessageType::SendTo,
                                             session_id,
                                             Some(room),
                                             Some(message),
-                                        );
+                                        ) {
+                                            let _ = connection.write(message).await;
+                                        }
 
-                                    let _ = connection.write(message).await;
                                 },
                                 Some(Action::PrivMsg{ user, message }) => {
                                     let (session_id, username) = {
@@ -235,14 +240,16 @@ async fn run(
                                     }
 
                                     else {
-                                        let message = Message::build(
+
+                                        if let Ok(message) = Message::build(
                                                 MessageType::PrivMsg,
                                                 session_id,
                                                 Some(user),
                                                 Some(message),
-                                            );
+                                            ) {
+                                                let _ = connection.write(message).await;
+                                            }
 
-                                        let _ = connection.write(message).await;
                                     }
                                 },
                                 Some(Action::Join { room }) => {
@@ -251,14 +258,15 @@ async fn run(
                                         guard.session_id
                                     };
 
-                                    let message = Message::build(
+                                    if let Ok(message) = Message::build(
                                             MessageType::Join,
                                             session_id,
                                             Some(room),
                                             None,
-                                        );
+                                        ) {
+                                            let _ = connection.write(message).await;
+                                        }
 
-                                    let _ = connection.write(message).await;
                                 },
                                 Some(Action::Leave { room }) => {
                                     let session_id = {
@@ -266,14 +274,15 @@ async fn run(
                                         guard.session_id
                                     };
 
-                                    let message = Message::build(
+                                    if let Ok(message) = Message::build(
                                             MessageType::Leave,
                                             session_id,
                                             Some(room),
                                             None,
-                                        );
+                                        ) {
+                                            let _ = connection.write(message).await;
+                                        }
 
-                                    let _ = connection.write(message).await;
                                 },
                                 Some(Action::List { opt }) => {
                                     let session_id = {
@@ -281,14 +290,15 @@ async fn run(
                                         guard.session_id
                                     };
 
-                                    let message = Message::build(
+                                    if let Ok(message) = Message::build(
                                             MessageType::List,
                                             session_id,
                                             Some(opt),
                                             None,
-                                        );
+                                        ) {
+                                            let _ = connection.write(message).await;
+                                        }
 
-                                    let _ = connection.write(message).await;
                                 },
                                 Some(Action::Create { room }) => {
                                     let session_id = {
@@ -296,14 +306,15 @@ async fn run(
                                         guard.session_id
                                     };
 
-                                    let message = Message::build(
+                                    if let Ok(message) = Message::build(
                                             MessageType::Create,
                                             session_id,
                                             Some(room),
                                             None,
-                                        );
+                                        ) {
+                                            let _ = connection.write(message).await;
+                                        }
 
-                                    let _ = connection.write(message).await;
                                 },
                                 Some(Action::Disconnect) => {
                                     let mut handler_state = handler_state.lock().unwrap();

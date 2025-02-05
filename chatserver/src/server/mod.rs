@@ -364,18 +364,19 @@ impl Server {
                                     if let Some((room_handle, _)) = session.rooms.get(&room) {
                                         let username = &session.username;
 
-                                        let message = Message::build(
+                                        if let Ok(message) = Message::build(
                                             MessageType::RoomMessage,
                                             id,
                                             Some(room.clone()),
                                             Some(format!("{username}: {content}")),
-                                        );
+                                        ) {
+                                            let _ = room_handle.send_message(message);
 
-                                    let _ = room_handle.send_message(message);
+                                            let reply = ServerReply::MessagedRoom;
 
-                                        let reply = ServerReply::MessagedRoom;
+                                            let _ = reply_tx.send(reply);
+                                        }
 
-                                        let _ = reply_tx.send(reply);
                                     }
 
                                     else {
@@ -403,18 +404,19 @@ impl Server {
 
                                     if let Some((_, receiving_session_tx)) = self.sessions.get_mut(&receiver_id) {
 
-                                        let message = Message::build(
+                                        if let Ok(message) = Message::build(
                                             MessageType::IncomingMsg,
                                             id,
                                             None,
                                             Some(format!("from {sender}: {content}")),
-                                        );
+                                        ) {
+                                            let _ = receiving_session_tx.send(message);
 
-                                        let _ = receiving_session_tx.send(message);
+                                            let reply = ServerReply::MessagedUser;
 
-                                        let reply = ServerReply::MessagedUser;
+                                            let _ = reply_tx.send(reply);
+                                        }
 
-                                        let _ = reply_tx.send(reply);
                                     }
 
                                     else {
@@ -476,6 +478,12 @@ pub async fn handle_session(
             _ = client_connection.readable() => {
                 match client_connection.read().await {
                     Ok(message) => {
+                        if message.is_none() {
+                            continue;
+                        }
+
+                        let message = message.unwrap();
+
                         let header = message.header;
                         match header.message_type {
                             MessageType::Register => {
@@ -493,24 +501,26 @@ pub async fn handle_session(
 
                                 match server_reply {
                                     Ok(ServerReply::Registered { username }) => {
-                                        let message = Message::build(
+                                        if let Ok(message) = Message::build(
                                                 MessageType::Registered,
                                                 0,
                                                 Some(session_id.to_string()),
                                                 Some(username),
-                                            );
+                                            ) {
+                                                let _ = client_connection.write(message).await;
+                                            }
 
-                                        let _ = client_connection.write(message).await;
                                     },
                                     Ok(ServerReply::Failed { error }) => {
-                                        let message = Message::build(
+                                        if let Ok(message) = Message::build(
                                                 MessageType::Failed,
                                                 0,
                                                 Some(String::from("register")),
                                                 Some(error),
-                                            );
+                                            ) {
+                                                let _ = client_connection.write(message).await;
+                                            }
 
-                                        let _ = client_connection.write(message).await;
                                     },
                                     _ => {},
                                 }
@@ -530,24 +540,25 @@ pub async fn handle_session(
 
                                 match server_reply {
                                     Ok(ServerReply::NameChanged { new_username, old_username }) => {
-                                        let message = Message::build(
+                                        if let Ok(message) = Message::build(
                                                 MessageType::ChangedName,
                                                 0,
                                                 Some(new_username),
                                                 Some(old_username),
-                                            );
-
-                                        let _ = client_connection.write(message).await;
+                                            ) {
+                                                let _ = client_connection.write(message).await;
+                                            }
                                     },
                                     Ok(ServerReply::Failed { error }) => {
-                                        let message = Message::build(
+                                        if let Ok(message) = Message::build(
                                                 MessageType::Failed,
                                                 0,
                                                 Some(String::from("changename")),
                                                 Some(error),
-                                            );
+                                            ) {
+                                                let _ = client_connection.write(message).await;
+                                            }
 
-                                        let _ = client_connection.write(message).await;
                                     },
                                     _ => {},
                                 }
@@ -568,24 +579,26 @@ pub async fn handle_session(
 
                                 match server_reply {
                                     Ok(ServerReply::Joined { room }) => {
-                                        let message = Message::build(
+                                        if let Ok(message) = Message::build(
                                                 MessageType::Joined,
                                                 0,
                                                 Some(room),
                                                 None,
-                                            );
+                                            ) {
+                                                let _ = client_connection.write(message).await;
+                                            }
 
-                                        let _ = client_connection.write(message).await;
                                     },
                                     Ok(ServerReply::Failed { error }) => {
-                                        let message = Message::build(
+                                        if let Ok(message) = Message::build(
                                                 MessageType::Failed,
                                                 0,
                                                 Some(String::from("join")),
                                                 Some(error),
-                                            );
+                                            ) {
+                                                let _ = client_connection.write(message).await;
+                                            }
 
-                                        let _ = client_connection.write(message).await;
                                     },
                                     _ => {},
                                 }
@@ -607,24 +620,26 @@ pub async fn handle_session(
 
                                 match server_reply {
                                     Ok(ServerReply::LeftRoom { room }) => {
-                                        let message = Message::build(
+                                        if let Ok(message) = Message::build(
                                                 MessageType::LeftRoom,
                                                 0,
                                                 Some(room),
                                                 None,
-                                            );
+                                            ) {
+                                                let _ = client_connection.write(message).await;
+                                            }
 
-                                        let _ = client_connection.write(message).await;
                                     },
                                     Ok(ServerReply::Failed { error }) => {
-                                        let message = Message::build(
+                                        if let Ok(message) = Message::build(
                                                 MessageType::Failed,
                                                 0,
                                                 Some(String::from("leave")),
                                                 Some(error),
-                                            );
+                                            ) {
+                                                let _ = client_connection.write(message).await;
+                                            }
 
-                                        let _ = client_connection.write(message).await;
                                     },
                                     _ => {},
                                 }
@@ -645,24 +660,26 @@ pub async fn handle_session(
 
                                 match server_reply {
                                     Ok(ServerReply::CreatedRoom { room }) => {
-                                        let message = Message::build(
+                                        if let Ok(message) = Message::build(
                                                 MessageType::CreatedRoom,
                                                 0,
                                                 Some(room),
                                                 None,
-                                            );
+                                            ) {
+                                                let _ = client_connection.write(message).await;
+                                            }
 
-                                        let _ = client_connection.write(message).await;
                                     },
                                     Ok(ServerReply::Failed { error }) => {
-                                        let message = Message::build(
+                                        if let Ok(message) = Message::build(
                                                 MessageType::Failed,
                                                 0,
                                                 Some(String::from("create")),
                                                 Some(error),
-                                            );
+                                            ) {
+                                                let _ = client_connection.write(message).await;
+                                            }
 
-                                        let _ = client_connection.write(message).await;
                                     },
                                     _ => {},
                                 }
@@ -686,24 +703,26 @@ pub async fn handle_session(
 
                                 match server_reply {
                                     Ok(ServerReply::MessagedRoom) => {
-                                        let message = Message::build(
+                                        if let Ok(message) = Message::build(
                                                 MessageType::MessagedRoom,
                                                 0,
                                                 Some(room),
                                                 Some(content),
-                                            );
+                                            ) {
+                                                let _ = client_connection.write(message).await;
+                                            }
 
-                                        let _ = client_connection.write(message).await;
                                     },
                                     Ok(ServerReply::Failed { error }) => {
-                                        let message = Message::build(
+                                        if let Ok(message) = Message::build(
                                                 MessageType::Failed,
                                                 0,
                                                 Some(String::from("sendto")),
                                                 Some(error),
-                                            );
+                                            ) {
+                                                let _ = client_connection.write(message).await;
+                                            }
 
-                                        let _ = client_connection.write(message).await;
                                     },
                                     _ => {},
                                 }
@@ -724,44 +743,48 @@ pub async fn handle_session(
 
                                 match server_reply {
                                     Ok(ServerReply::ListingUsers { content }) => {
-                                        let message = Message::build(
+                                        if let Ok(message) = Message::build(
                                                 MessageType::Users,
                                                 0,
                                                 None,
                                                 Some(content),
-                                            );
+                                            ) {
+                                                let _ = client_connection.write(message).await;
+                                            }
 
-                                        let _ = client_connection.write(message).await;
                                     },
                                     Ok(ServerReply::ListingUserRooms { content }) => {
-                                        let message = Message::build(
+                                        if let Ok(message) = Message::build(
                                                 MessageType::UserRooms,
                                                 0,
                                                 None,
                                                 Some(content),
-                                            );
+                                            ) {
+                                                let _ = client_connection.write(message).await;
+                                            }
 
-                                        let _ = client_connection.write(message).await;
                                     },
                                     Ok(ServerReply::ListingRooms { content }) => {
-                                        let message = Message::build(
+                                        if let Ok(message) = Message::build(
                                                 MessageType::AllRooms,
                                                 0,
                                                 None,
                                                 Some(content),
-                                            );
+                                            ) {
+                                                let _ = client_connection.write(message).await;
+                                            }
 
-                                        let _ = client_connection.write(message).await;
                                     },
                                     Ok(ServerReply::Failed { error }) => {
-                                        let message = Message::build(
+                                        if let Ok(message) = Message::build(
                                                 MessageType::Failed,
                                                 0,
                                                 Some(String::from("list")),
                                                 Some(error),
-                                            );
+                                            ) {
+                                                let _ = client_connection.write(message).await;
+                                            }
 
-                                        let _ = client_connection.write(message).await;
                                     },
                                     _ => {},
                                 }
@@ -783,25 +806,26 @@ pub async fn handle_session(
 
                                 match server_reply {
                                     Ok(ServerReply::MessagedUser) => {
-                                        let message = Message::build(
+                                        if let Ok(message) = Message::build(
                                                 MessageType::OutgoingMsg,
                                                 0,
                                                 Some(username),
                                                 Some(content),
-                                            );
-
-                                       let _ = client_connection.write(message).await;
+                                            ) {
+                                                let _ = client_connection.write(message).await;
+                                            }
 
                                     },
                                     Ok(ServerReply::Failed { error }) => {
-                                        let message = Message::build(
+                                        if let Ok(message) = Message::build(
                                                 MessageType::Failed,
                                                 0,
                                                 Some(String::from("privmsg")),
                                                 Some(error),
-                                            );
+                                            ) {
+                                                let _ = client_connection.write(message).await;
+                                            }
 
-                                        let _ = client_connection.write(message).await;
                                     },
                                     _ => {},
                                 }

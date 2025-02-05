@@ -35,7 +35,7 @@ fn deserialize() {
     };
 
     let message_orig = Message { header, body };
-    let message_new = Message::from_bytes(bytes);
+    let message_new = Message::from_bytes(bytes).unwrap();
 
     assert_eq!(message_new, message_orig);
 }

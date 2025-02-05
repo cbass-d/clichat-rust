@@ -36,14 +36,18 @@ impl Connection {
         self.stream_in.readable().await
     }
 
-    pub async fn read(&mut self) -> Result<Message, io::Error> {
+    pub async fn read(&mut self) -> Result<Option<Message>, io::Error> {
         match self.stream_in.try_read_buf(&mut self.buf) {
             Ok(len) if len > 0 => {
                 let bytes = &self.buf[0..len];
                 let message = Message::from_bytes(bytes.to_vec());
                 self.buf.clear();
 
-                Ok(message)
+                if let Ok(message) = message {
+                    Ok(Some(message))
+                } else {
+                    Ok(None)
+                }
             }
             Ok(_) => Err(io::ErrorKind::BrokenPipe.into()),
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => Err(e),
