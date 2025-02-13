@@ -120,7 +120,7 @@ impl Message {
     }
 
     pub fn from_bytes(bytes: Vec<u8>) -> Result<Self> {
-        let message = from_bytes(&bytes).unwrap();
+        let message = from_bytes(&bytes)?;
 
         check_message(&message)?;
 

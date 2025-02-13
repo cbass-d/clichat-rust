@@ -1,10 +1,10 @@
 #![warn(clippy::all)]
 
-mod connection;
 mod state_handler;
 mod tui;
 
 use anyhow::Result;
+use futures_util::{SinkExt, StreamExt};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::{
@@ -12,10 +12,9 @@ use tokio::{
     net::TcpStream,
     sync::broadcast::{self},
 };
+use tokio_tungstenite::WebSocketStream;
 
 use crate::state_handler::{Action, ClientState, ConnectionStatus, StateHandler};
-use connection::Connection;
-
 use common::message::{Message, MessageType};
 use tui::{
     app_router::AppRouter,
@@ -28,27 +27,24 @@ enum Terminate {
     Exit,
 }
 
-pub async fn establish_connection(server: &str) -> Result<TcpStream> {
+pub async fn establish_connection(server: &str) -> Result<WebSocketStream<TcpStream>> {
     let stream = TcpStream::connect(server).await?;
-    Ok(stream)
+    let (ws_stream, _) = tokio_tungstenite::client_async(format!("ws://{server}"), stream).await?;
+    Ok(ws_stream)
 }
 
 pub async fn registering_on_server(
     server: &str,
     state: Arc<Mutex<ClientState>>,
-    connection_handle: &mut Option<Connection>,
+    connection_handle: &mut Option<WebSocketStream<TcpStream>>,
 ) -> Result<()> {
-    let stream = establish_connection(server).await?;
+    let mut ws_stream = establish_connection(server).await?;
 
     {
         let mut state = state.lock().unwrap();
         state.current_server = server.to_string();
         state.connection_status = ConnectionStatus::Established;
-    }
-    let mut connection = Connection::new(stream);
 
-    {
-        let mut state = state.lock().unwrap();
         state.push_notification(TextType::Notification {
             text: String::from("[*] Successfully connected"),
         });
@@ -66,10 +62,10 @@ pub async fn registering_on_server(
     };
 
     if let Ok(message) = Message::build(MessageType::Register, session_id, Some(username), None) {
-        let _ = connection.write(message).await;
+        let _ = ws_stream.send(message.to_bytes().into()).await;
     }
 
-    let _ = connection_handle.insert(connection);
+    let _ = connection_handle.insert(ws_stream);
 
     Ok(())
 }
@@ -137,7 +133,7 @@ async fn run(
             state_handler.updated();
 
             let mut ticker = tokio::time::interval(Duration::from_millis(250));
-            let mut connection_handle: Option<Connection> = None;
+            let mut connection_handle: Option<WebSocketStream<TcpStream>> = None;
 
             loop {
                 if exit {
@@ -152,21 +148,21 @@ async fn run(
                     // * Shutdown channel
                     tokio::select! {
                         _tick = ticker.tick() => {},
-                        _ = connection.readable() => {
-                                match connection.read().await {
-                                    Ok(message) => {
+                        message = connection.next() => {
+                                match message {
+                                    Some(message) if message.is_ok() => {
                                         let mut handler_state = handler_state.lock().unwrap();
 
-                                        if let Some(message) = message {
+                                        if let Ok(message) = message {
                                             // Certain errors need the connection to be closed
+                                            let message = Message::from_bytes(message.into_data().into()).unwrap();
                                             let _ = handler_state.handle_message(message).map_err(|_| {
                                                 connection_handle = None;
                                             });
                                         }
 
                                     },
-                                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {},
-                                    Err(_) => {
+                                    None => {
                                         let mut handler_state = handler_state.lock().unwrap();
 
                                         handler_state.push_notification(TextType::Error {
@@ -176,6 +172,7 @@ async fn run(
                                         handler_state.terminate_connection();
                                         connection_handle = None;
                                     },
+                                    _ => {},
                                 }
 
                             state_handler.updated();
@@ -199,7 +196,7 @@ async fn run(
                                             Some(name),
                                             None
                                     ) {
-                                        let _ = connection.write(message).await;
+                                        let _ = connection.send(message.to_bytes().into()).await;
                                     }
 
 
@@ -222,7 +219,7 @@ async fn run(
                                             Some(room),
                                             Some(message),
                                         ) {
-                                            let _ = connection.write(message).await;
+                                            let _ = connection.send(message.to_bytes().into()).await;
                                         }
 
                                 },
@@ -239,17 +236,14 @@ async fn run(
                                         });
                                     }
 
-                                    else {
-
-                                        if let Ok(message) = Message::build(
+                                    else if let Ok(message) = Message::build(
                                                 MessageType::PrivMsg,
                                                 session_id,
                                                 Some(user),
                                                 Some(message),
                                             ) {
-                                                let _ = connection.write(message).await;
-                                            }
 
+                                            let _ = connection.send(message.to_bytes().into()).await;
                                     }
                                 },
                                 Some(Action::Join { room }) => {
@@ -264,7 +258,7 @@ async fn run(
                                             Some(room),
                                             None,
                                         ) {
-                                            let _ = connection.write(message).await;
+                                            let _ = connection.send(message.to_bytes().into()).await;
                                         }
 
                                 },
@@ -280,7 +274,7 @@ async fn run(
                                             Some(room),
                                             None,
                                         ) {
-                                            let _ = connection.write(message).await;
+                                            let _ = connection.send(message.to_bytes().into()).await;
                                         }
 
                                 },
@@ -296,7 +290,7 @@ async fn run(
                                             Some(opt),
                                             None,
                                         ) {
-                                            let _ = connection.write(message).await;
+                                            let _ = connection.send(message.to_bytes().into()).await;
                                         }
 
                                 },
@@ -312,7 +306,7 @@ async fn run(
                                             Some(room),
                                             None,
                                         ) {
-                                            let _ = connection.write(message).await;
+                                            let _ = connection.send(message.to_bytes().into()).await;
                                         }
 
                                 },

@@ -1,21 +1,19 @@
-mod client_connection;
 mod session;
 
-pub use client_connection::ClientConnection;
 use common::message::{Message, MessageType};
 pub use session::Session;
 
 use crate::room::{room_manager::RoomManager, Room};
 use anyhow::Result;
+use futures_util::{SinkExt, StreamExt};
 use log::{error, info};
 use std::collections::HashMap;
-use std::io;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc, Mutex,
 };
 use tokio::{
-    net::TcpListener,
+    net::{TcpListener, TcpStream},
     sync::{
         broadcast::{self},
         mpsc::{self},
@@ -155,7 +153,6 @@ impl Server {
                             let to_server_tx = self.to_server_tx.clone();
 
                             let id = self.next_client_id.fetch_add(1, Ordering::Relaxed);
-                            let client_connection = ClientConnection::new(stream);
                             let (to_session_tx, session_rx, session) = Session::new();
                             let session_shutdown_rx = shutdown_rx.resubscribe();
 
@@ -164,7 +161,7 @@ impl Server {
                             async move {
                                 handle_session(
                                         id,
-                                        client_connection,
+                                        stream,
                                         to_server_tx,
                                         session_rx,
                                         session_shutdown_rx
@@ -188,17 +185,15 @@ impl Server {
                                     let _ = reply_tx.send(reply);
                                 }
 
-                                else {
-                                    if let Some((session, _)) = self.sessions.get_mut(&id) {
-                                        session.set_username(&username);
+                                else if let Some((session, _)) = self.sessions.get_mut(&id) {
+                                    session.set_username(&username);
 
-                                        self.username_to_id.insert(username.clone(), id);
-                                        self.id_to_username.insert(id, username.clone());
+                                    self.username_to_id.insert(username.clone(), id);
+                                    self.id_to_username.insert(id, username.clone());
 
-                                        let reply = ServerReply::Registered { username };
+                                    let reply = ServerReply::Registered { username };
 
-                                        let _ = reply_tx.send(reply);
-                                    }
+                                    let _ = reply_tx.send(reply);
                                 }
                             },
                             ServerEvent::ChangeName { id, new_username } => {
@@ -210,22 +205,20 @@ impl Server {
                                     let _ = reply_tx.send(reply);
                                 }
 
-                                else {
-                                    if let Some((session, _)) = self.sessions.get_mut(&id) {
-                                        session.set_username(&new_username);
-                                        let old_username = self.id_to_username[&id].clone();
+                                else if let Some((session, _)) = self.sessions.get_mut(&id) {
+                                    session.set_username(&new_username);
+                                    let old_username = self.id_to_username[&id].clone();
 
-                                        *self.id_to_username.get_mut(&id).unwrap() = new_username.clone();
-                                        self.username_to_id.remove(&old_username);
-                                        self.username_to_id.insert(new_username.clone(), id);
+                                    *self.id_to_username.get_mut(&id).unwrap() = new_username.clone();
+                                    self.username_to_id.remove(&old_username);
+                                    self.username_to_id.insert(new_username.clone(), id);
 
-                                        let reply = ServerReply::NameChanged {
-                                            new_username,
-                                            old_username,
-                                        };
+                                    let reply = ServerReply::NameChanged {
+                                        new_username,
+                                        old_username,
+                                    };
 
-                                        let _ = reply_tx.send(reply);
-                                    }
+                                    let _ = reply_tx.send(reply);
                                 }
                             },
                             ServerEvent::List { id, opt } => {
@@ -455,11 +448,15 @@ impl Server {
 
 pub async fn handle_session(
     session_id: u64,
-    mut client_connection: ClientConnection,
+    stream: TcpStream,
     to_server_tx: mpsc::UnboundedSender<(ServerEvent, oneshot::Sender<ServerReply>)>,
     mut session_rx: mpsc::UnboundedReceiver<Message>,
     mut shutdown_rx: broadcast::Receiver<()>,
 ) {
+    let mut ws_stream = tokio_tungstenite::accept_async(stream)
+        .await
+        .expect("Unable to accept websocket");
+
     loop {
         tokio::select! {
             _ = shutdown_rx.recv() => break,
@@ -470,19 +467,17 @@ pub async fn handle_session(
                     // When server sends two messages rapidly one of the messsages gets lost on
                     // the client side
                     // TODO: Find a better solution to this problem
-                    std::thread::sleep(std::time::Duration::from_millis(3));
 
-                    let _ = client_connection.write(message).await;
+                    let message_bytes = message.to_bytes();
+
+                    let _ = ws_stream.send(message_bytes.into()).await;
                 }
             },
-            _ = client_connection.readable() => {
-                match client_connection.read().await {
-                    Ok(message) => {
-                        if message.is_none() {
-                            continue;
-                        }
-
+            message = ws_stream.next() => {
+                match message {
+                    Some(message) if message.is_ok() => {
                         let message = message.unwrap();
+                        let message = Message::from_bytes(message.into_data().into()).unwrap();
 
                         let header = message.header;
                         match header.message_type {
@@ -507,7 +502,8 @@ pub async fn handle_session(
                                                 Some(session_id.to_string()),
                                                 Some(username),
                                             ) {
-                                                let _ = client_connection.write(message).await;
+
+                                                let _ = ws_stream.send(message.to_bytes().into()).await;
                                             }
 
                                     },
@@ -518,7 +514,7 @@ pub async fn handle_session(
                                                 Some(String::from("register")),
                                                 Some(error),
                                             ) {
-                                                let _ = client_connection.write(message).await;
+                                                let _ = ws_stream.send(message.to_bytes().into()).await;
                                             }
 
                                     },
@@ -546,7 +542,7 @@ pub async fn handle_session(
                                                 Some(new_username),
                                                 Some(old_username),
                                             ) {
-                                                let _ = client_connection.write(message).await;
+                                                let _ = ws_stream.send(message.to_bytes().into()).await;
                                             }
                                     },
                                     Ok(ServerReply::Failed { error }) => {
@@ -556,7 +552,7 @@ pub async fn handle_session(
                                                 Some(String::from("changename")),
                                                 Some(error),
                                             ) {
-                                                let _ = client_connection.write(message).await;
+                                                let _ = ws_stream.send(message.to_bytes().into()).await;
                                             }
 
                                     },
@@ -585,7 +581,7 @@ pub async fn handle_session(
                                                 Some(room),
                                                 None,
                                             ) {
-                                                let _ = client_connection.write(message).await;
+                                                let _ = ws_stream.send(message.to_bytes().into()).await;
                                             }
 
                                     },
@@ -596,7 +592,7 @@ pub async fn handle_session(
                                                 Some(String::from("join")),
                                                 Some(error),
                                             ) {
-                                                let _ = client_connection.write(message).await;
+                                                let _ = ws_stream.send(message.to_bytes().into()).await;
                                             }
 
                                     },
@@ -626,7 +622,7 @@ pub async fn handle_session(
                                                 Some(room),
                                                 None,
                                             ) {
-                                                let _ = client_connection.write(message).await;
+                                                let _ = ws_stream.send(message.to_bytes().into()).await;
                                             }
 
                                     },
@@ -637,7 +633,7 @@ pub async fn handle_session(
                                                 Some(String::from("leave")),
                                                 Some(error),
                                             ) {
-                                                let _ = client_connection.write(message).await;
+                                                let _ = ws_stream.send(message.to_bytes().into()).await;
                                             }
 
                                     },
@@ -666,7 +662,7 @@ pub async fn handle_session(
                                                 Some(room),
                                                 None,
                                             ) {
-                                                let _ = client_connection.write(message).await;
+                                                let _ = ws_stream.send(message.to_bytes().into()).await;
                                             }
 
                                     },
@@ -677,7 +673,7 @@ pub async fn handle_session(
                                                 Some(String::from("create")),
                                                 Some(error),
                                             ) {
-                                                let _ = client_connection.write(message).await;
+                                                let _ = ws_stream.send(message.to_bytes().into()).await;
                                             }
 
                                     },
@@ -709,7 +705,7 @@ pub async fn handle_session(
                                                 Some(room),
                                                 Some(content),
                                             ) {
-                                                let _ = client_connection.write(message).await;
+                                                let _ = ws_stream.send(message.to_bytes().into()).await;
                                             }
 
                                     },
@@ -720,7 +716,7 @@ pub async fn handle_session(
                                                 Some(String::from("sendto")),
                                                 Some(error),
                                             ) {
-                                                let _ = client_connection.write(message).await;
+                                                let _ = ws_stream.send(message.to_bytes().into()).await;
                                             }
 
                                     },
@@ -749,7 +745,7 @@ pub async fn handle_session(
                                                 None,
                                                 Some(content),
                                             ) {
-                                                let _ = client_connection.write(message).await;
+                                                let _ = ws_stream.send(message.to_bytes().into()).await;
                                             }
 
                                     },
@@ -760,7 +756,7 @@ pub async fn handle_session(
                                                 None,
                                                 Some(content),
                                             ) {
-                                                let _ = client_connection.write(message).await;
+                                                let _ = ws_stream.send(message.to_bytes().into()).await;
                                             }
 
                                     },
@@ -771,7 +767,7 @@ pub async fn handle_session(
                                                 None,
                                                 Some(content),
                                             ) {
-                                                let _ = client_connection.write(message).await;
+                                                let _ = ws_stream.send(message.to_bytes().into()).await;
                                             }
 
                                     },
@@ -782,7 +778,7 @@ pub async fn handle_session(
                                                 Some(String::from("list")),
                                                 Some(error),
                                             ) {
-                                                let _ = client_connection.write(message).await;
+                                                let _ = ws_stream.send(message.to_bytes().into()).await;
                                             }
 
                                     },
@@ -812,7 +808,7 @@ pub async fn handle_session(
                                                 Some(username),
                                                 Some(content),
                                             ) {
-                                                let _ = client_connection.write(message).await;
+                                                let _ = ws_stream.send(message.to_bytes().into()).await;
                                             }
 
                                     },
@@ -823,7 +819,7 @@ pub async fn handle_session(
                                                 Some(String::from("privmsg")),
                                                 Some(error),
                                             ) {
-                                                let _ = client_connection.write(message).await;
+                                                let _ = ws_stream.send(message.to_bytes().into()).await;
                                             }
 
                                     },
@@ -833,9 +829,7 @@ pub async fn handle_session(
                             _ => {},
                         }
                     },
-                    Err(e) if e.kind() == io::ErrorKind::WouldBlock => {},
-                    Err(_) => {
-
+                    None => {
                         // Connection to the client has been closed/dropped
                         // session has to be dropped as well
                         let event = ServerEvent::DropSession {
@@ -847,6 +841,7 @@ pub async fn handle_session(
 
                         break;
                     },
+                    _ => {},
                 }
             },
         }
