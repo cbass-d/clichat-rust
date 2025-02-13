@@ -462,12 +462,6 @@ pub async fn handle_session(
             _ = shutdown_rx.recv() => break,
             session_message = session_rx.recv() => {
                 if let Some(message) = session_message {
-
-                    // Add small delay for sending message
-                    // When server sends two messages rapidly one of the messsages gets lost on
-                    // the client side
-                    // TODO: Find a better solution to this problem
-
                     let message_bytes = message.to_bytes();
 
                     let _ = ws_stream.send(message_bytes.into()).await;
