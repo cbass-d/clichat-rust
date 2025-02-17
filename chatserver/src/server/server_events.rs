@@ -110,12 +110,13 @@ pub async fn handle_event(
 
                 let _ = reply_tx.send(reply);
             } else if let Some((session, _)) = server.sessions.get_mut(&id) {
-                session.set_username(&new_username);
                 let old_username = server.id_to_username[&id].clone();
 
                 *server.id_to_username.get_mut(&id).unwrap() = new_username.clone();
                 server.username_to_id.remove(&old_username);
                 server.username_to_id.insert(new_username.clone(), id);
+
+                session.set_username(&new_username);
 
                 let reply = ServerReply::NameChanged {
                     new_username,
@@ -141,13 +142,7 @@ pub async fn handle_event(
             }
             "rooms" => {
                 if let Some((session, _)) = server.sessions.get_mut(&id) {
-                    let user_rooms = session
-                        .rooms
-                        .clone()
-                        .into_keys()
-                        .map(|s| s.to_string())
-                        .collect::<Vec<String>>()
-                        .join(",");
+                    let user_rooms = session.joined_rooms();
 
                     let reply = ServerReply::ListingUserRooms {
                         content: user_rooms,
@@ -178,52 +173,32 @@ pub async fn handle_event(
         },
         ServerEvent::JoinRoom { id, room } => {
             if let Some((session, _)) = server.sessions.get_mut(&id) {
-                if session.rooms.contains_key(&room) {
-                    let reply = ServerReply::Failed {
-                        error: String::from("Already part of room"),
-                    };
-
-                    let _ = reply_tx.send(reply);
-                } else {
-                    match session.join_room(&room, &server.room_manager).await {
-                        Ok(()) => {
-                            let reply = ServerReply::Joined { room };
-
-                            let _ = reply_tx.send(reply);
-                        }
-                        Err(e) => {
-                            let reply = ServerReply::Failed {
-                                error: e.to_string(),
-                            };
-
-                            let _ = reply_tx.send(reply);
-                        }
+                match session.join_room(&room, &server.room_manager).await {
+                    Ok(()) => {
+                        let _ = reply_tx.send(ServerReply::Joined { room });
+                    }
+                    Err(e) => {
+                        let _ = reply_tx.send(ServerReply::Failed {
+                            error: e.to_string(),
+                        });
                     }
                 }
             }
         }
         ServerEvent::LeaveRoom { id, room } => {
             if let Some((session, _)) = server.sessions.get_mut(&id) {
-                if !session.rooms.contains_key(&room) {
-                    let reply = ServerReply::Failed {
-                        error: String::from("Not part of room"),
-                    };
+                match session.leave_room(&room) {
+                    Ok(()) => {
+                        let reply = ServerReply::LeftRoom { room };
 
-                    let _ = reply_tx.send(reply);
-                } else {
-                    match session.leave_room(&room) {
-                        Ok(()) => {
-                            let reply = ServerReply::LeftRoom { room };
+                        let _ = reply_tx.send(reply);
+                    }
+                    Err(e) => {
+                        let reply = ServerReply::Failed {
+                            error: e.to_string(),
+                        };
 
-                            let _ = reply_tx.send(reply);
-                        }
-                        Err(e) => {
-                            let reply = ServerReply::Failed {
-                                error: e.to_string(),
-                            };
-
-                            let _ = reply_tx.send(reply);
-                        }
+                        let _ = reply_tx.send(reply);
                     }
                 }
             }
@@ -248,27 +223,15 @@ pub async fn handle_event(
         }
         ServerEvent::SendTo { id, room, content } => {
             if let Some((session, _)) = server.sessions.get_mut(&id) {
-                if let Some((room_handle, _)) = session.rooms.get(&room) {
-                    let username = &session.username;
-
-                    if let Ok(message) = Message::build(
-                        MessageType::RoomMessage,
-                        id,
-                        Some(room.clone()),
-                        Some(format!("{username}: {content}")),
-                    ) {
-                        let _ = room_handle.send_message(message);
-
-                        let reply = ServerReply::MessagedRoom;
-
-                        let _ = reply_tx.send(reply);
+                match session.send_room_message(&room, &content).await {
+                    Ok(()) => {
+                        let _ = reply_tx.send(ServerReply::MessagedRoom);
                     }
-                } else {
-                    let reply = ServerReply::Failed {
-                        error: String::from("Not part of room"),
-                    };
-
-                    let _ = reply_tx.send(reply);
+                    Err(e) => {
+                        let _ = reply_tx.send(ServerReply::Failed {
+                            error: e.to_string(),
+                        });
+                    }
                 }
             }
         }
